@@ -1,4 +1,5 @@
-import { ClerkProvider, useAuth } from '@clerk/clerk-expo';
+import { ClerkProvider } from '@clerk/clerk-expo';
+import { USE_MOCK_AUTH, useAuth } from '../lib/auth';
 import { Slot, useRouter, useSegments } from 'expo-router';
 import * as SecureStore from 'expo-secure-store';
 import { useEffect } from 'react';
@@ -18,7 +19,7 @@ const tokenCache = {
   },
 };
 
-// Auth gate — redirects to auth screens or home based on Clerk sign-in state
+// Auth gate — redirects to auth screens or home based on Clerk/Mock sign-in state
 function AuthGate() {
   const { isSignedIn, isLoaded } = useAuth();
   const segments = useSegments();
@@ -39,7 +40,7 @@ function AuthGate() {
     }
   }, [isSignedIn, isLoaded, segments]);
 
-  // Show splash/loading while Clerk initialises
+  // Show splash/loading while Auth initialises
   if (!isLoaded) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.background }}>
@@ -52,6 +53,10 @@ function AuthGate() {
 }
 
 export default function RootLayout() {
+  if (USE_MOCK_AUTH) {
+    return <AuthGate />;
+  }
+
   const publishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY;
 
   if (!publishableKey) {

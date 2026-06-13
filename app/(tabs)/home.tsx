@@ -1,4 +1,4 @@
-import { useUser, useAuth } from '@clerk/clerk-expo';
+import { useUser, useAuth } from '../../lib/auth';
 import { useEffect, useState } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet,

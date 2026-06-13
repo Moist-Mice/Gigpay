@@ -7,7 +7,7 @@ import {
   View, Text, StyleSheet, ActivityIndicator, TouchableOpacity,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useAuth } from '@clerk/clerk-expo';
+import { useAuth } from '../../lib/auth';
 import { colors, spacing, radius } from '../../constants/theme';
 
 const SUPABASE_URL     = process.env.EXPO_PUBLIC_SUPABASE_URL!;

@@ -1,4 +1,4 @@
-import { useUser } from '@clerk/clerk-expo';
+import { useUser } from '../../lib/auth';
 import { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
@@ -31,12 +31,14 @@ export default function NameScreen() {
     setLoading(true);
     setError('');
     try {
-      const { error: insertError } = await supabase.from('users').insert({
+      const isClerkTest = /^\d{3}55501\d{2}$/.test(phone);
+      const prefix = isClerkTest ? '+1' : '+91';
+      const { error: insertError } = await supabase.from('users').upsert({
         clerk_user_id: user!.id,
-        phone: '+91' + phone,
+        phone: prefix + phone,
         name: name.trim(),
         platform,
-      });
+      }, { onConflict: 'clerk_user_id' });
       if (insertError) throw insertError;
       router.replace('/(tabs)/home');
     } catch (e: any) {

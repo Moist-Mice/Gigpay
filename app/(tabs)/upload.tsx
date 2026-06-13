@@ -6,7 +6,7 @@ import {
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
-import { useAuth, useUser } from '@clerk/clerk-expo';
+import { useAuth, useUser } from '../../lib/auth';
 import { supabase } from '../../lib/supabase';
 import { uploadAndParse } from '../../lib/upload';
 import { colors, spacing, radius } from '../../constants/theme';

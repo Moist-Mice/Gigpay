@@ -1,4 +1,4 @@
-import { useSignIn, useSignUp } from '@clerk/clerk-expo';
+import { useSignIn, useSignUp } from '../../lib/auth';
 import { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
@@ -20,15 +20,25 @@ export default function PhoneScreen() {
 
   // Send OTP — tries sign-in first, falls back to sign-up for new users
   async function handleSendOTP() {
-    if (phone.length !== 10) {
+    // Sanitize input: remove all non-numeric characters
+    const cleanPhone = phone.replace(/\D/g, '');
+    
+    // Indian mobile numbers are always the last 10 digits of any formatted input
+    if (cleanPhone.length < 10) {
       setError('Sahi 10-digit mobile number darj karein');
       return;
     }
+    const finalPhone = cleanPhone.slice(-10);
+    const isClerkTest = /^\d{3}55501\d{2}$/.test(finalPhone);
+    const prefix = isClerkTest ? '+1' : '+91';
+    const fullPhone = prefix + finalPhone;
+
     setLoading(true);
     setError('');
     try {
       // Try sign-in first (returning user)
-      await signIn!.create({ identifier: '+91' + phone });
+      console.log('Attempting sign-in for:', fullPhone);
+      await signIn!.create({ identifier: fullPhone });
       const firstFactor = signIn!.supportedFirstFactors?.find(
         (f: any) => f.strategy === 'phone_code'
       ) as any;
@@ -36,16 +46,19 @@ export default function PhoneScreen() {
         strategy: 'phone_code',
         phoneNumberId: firstFactor.phoneNumberId,
       });
-      router.push({ pathname: '/(auth)/otp', params: { phone, flow: 'signIn' } });
+      router.push({ pathname: '/(auth)/otp', params: { phone: finalPhone, flow: 'signIn' } });
     } catch (e: any) {
+      console.warn('Clerk Sign In Error:', JSON.stringify(e, null, 2));
       // If user doesn't exist, create a new account
       const code = e.errors?.[0]?.code ?? '';
       if (code === 'form_identifier_not_found' || code === 'form_password_incorrect') {
         try {
-          await signUp!.create({ phoneNumber: '+91' + phone });
+          console.log('User not found. Attempting sign-up for:', fullPhone);
+          await signUp!.create({ phoneNumber: fullPhone });
           await signUp!.preparePhoneNumberVerification({ strategy: 'phone_code' });
-          router.push({ pathname: '/(auth)/otp', params: { phone, flow: 'signUp' } });
+          router.push({ pathname: '/(auth)/otp', params: { phone: finalPhone, flow: 'signUp' } });
         } catch (signUpErr: any) {
+          console.warn('Clerk Sign Up Error:', JSON.stringify(signUpErr, null, 2));
           setError(signUpErr.errors?.[0]?.message || 'Account banana mushkil ho gaya. Dobara try karein.');
         }
       } else {

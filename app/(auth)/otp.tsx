@@ -1,4 +1,4 @@
-import { useSignIn, useSignUp } from '@clerk/clerk-expo';
+import { useSignIn, useSignUp } from '../../lib/auth';
 import { useState, useRef, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
@@ -36,6 +36,7 @@ export default function OTPScreen() {
     try {
       if (flow === 'signUp') {
         // New user — verify phone and complete sign-up
+        console.log('Verifying phone verification code for signup');
         const result = await signUp!.attemptPhoneNumberVerification({ code: token });
         if (result.status === 'complete') {
           await setSignUpActive!({ session: result.createdSessionId });
@@ -44,6 +45,7 @@ export default function OTPScreen() {
         }
       } else {
         // Returning user — verify via sign-in
+        console.log('Verifying phone verification code for signin');
         const result = await signIn!.attemptFirstFactor({
           strategy: 'phone_code',
           code: token,
@@ -52,11 +54,13 @@ export default function OTPScreen() {
           await setSignInActive!({ session: result.createdSessionId });
 
           // Check if user has a profile in our DB
+          const isClerkTest = /^\d{3}55501\d{2}$/.test(phone);
+          const prefix = isClerkTest ? '+1' : '+91';
           const { data: existingUser } = await supabase
-            .from('users')
-            .select('id')
-            .eq('phone', '+91' + phone)
-            .maybeSingle();
+              .from('users')
+              .select('id')
+              .eq('phone', prefix + phone)
+              .maybeSingle();
 
           if (existingUser) {
             router.replace('/(tabs)/home');
@@ -66,6 +70,7 @@ export default function OTPScreen() {
         }
       }
     } catch (e: any) {
+      console.warn('Clerk OTP Verification Error:', JSON.stringify(e, null, 2));
       setError('OTP galat hai. Dobara try karein.');
       setOtp(['', '', '', '', '', '']);
       inputs.current[0]?.focus();
@@ -100,7 +105,11 @@ export default function OTPScreen() {
   async function handleResend() {
     if (countdown > 0) return;
     try {
-      await signIn!.create({ identifier: '+91' + phone });
+      const isClerkTest = /^\d{3}55501\d{2}$/.test(phone);
+      const prefix = isClerkTest ? '+1' : '+91';
+      const fullPhone = prefix + phone;
+      console.log('Attempting sign-in resend for:', fullPhone);
+      await signIn!.create({ identifier: fullPhone });
       const firstFactor = signIn!.supportedFirstFactors?.find(
         (f: any) => f.strategy === 'phone_code'
       ) as any;
@@ -112,6 +121,7 @@ export default function OTPScreen() {
       setOtp(['', '', '', '', '', '']);
       inputs.current[0]?.focus();
     } catch (e: any) {
+      console.warn('Clerk Resend Error:', JSON.stringify(e, null, 2));
       setError('OTP resend nahi ho paya. Dobara try karein.');
     }
   }

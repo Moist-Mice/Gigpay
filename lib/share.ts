@@ -8,7 +8,7 @@ import { Alert, Linking } from 'react-native';
 /** Download PDF to device cache, then open system share sheet */
 export async function sharePDF(pdfUrl: string, humanId: string): Promise<void> {
   try {
-    const localPath = `${FileSystem.cacheDirectory}${humanId}.pdf`;
+    const localPath = `${(FileSystem as any).cacheDirectory}${humanId}.pdf`;
 
     // Check if already downloaded
     const fileInfo = await FileSystem.getInfoAsync(localPath);
