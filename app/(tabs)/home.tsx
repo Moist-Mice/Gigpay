@@ -1,4 +1,4 @@
-import { useUser, useAuth } from '@clerk/clerk-expo';
+import { useUser, useAuth } from '../../lib/clerk';
 import { useEffect, useState } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet,
@@ -10,6 +10,14 @@ import { colors, spacing, radius } from '../../constants/theme';
 import { copy } from '../../constants/copy';
 import type { User, IncomeSubmission } from '../../lib/types';
 import { EarningsCard } from '../../components/EarningsCard';
+import {
+  FileTextIcon,
+  RobotIcon,
+  TrendingUpIcon,
+  SparklesIcon,
+  PlusIcon,
+  ShieldCheckIcon,
+} from '../../components/Icons';
 
 export default function HomeScreen() {
   const { user } = useUser();
@@ -52,18 +60,24 @@ export default function HomeScreen() {
   }
 
   const displayName = profile?.name ?? user?.firstName ?? 'there';
-  const platformEmoji = {
-    swiggy: '🟠', zomato: '🔴', rapido: '🟡', other: '➕',
-  }[profile?.platform ?? 'other'] ?? '👤';
 
   // Compute stats from submissions
   const certCount = submissions.length;
   const avgIncome = submissions.length > 0
     ? Math.round(submissions.reduce((s, sub) => s + (sub.avg_monthly_income ?? 0), 0) / submissions.length)
     : null;
+  // Phase 4: prefer composite credit score, fall back to consistency score
   const bestScore = submissions.length > 0
-    ? Math.max(...submissions.map(s => s.consistency_score ?? 0))
+    ? Math.max(...submissions.map(s => (s as any).composite_credit_score ?? s.consistency_score ?? 0))
     : null;
+  const isPhase4 = submissions.some(s => (s as any).composite_credit_score != null);
+
+  const steps = [
+    { Step: '01', Icon: FileTextIcon, Text: 'Bank ya CC statement PDF upload karein (net banking se download karein)' },
+    { Step: '02', Icon: RobotIcon, Text: 'AI bank data extract karta hai — 6 months credits, debits, EMIs' },
+    { Step: '03', Icon: TrendingUpIcon, Text: '8 signals se credit score (0-100) calculate hota hai' },
+    { Step: '04', Icon: SparklesIcon, Text: 'Certificate banao aur lender ko WhatsApp pe bhejo' },
+  ];
 
   return (
     <ScrollView
@@ -74,7 +88,7 @@ export default function HomeScreen() {
       {/* Header bar */}
       <View style={styles.headerRow}>
         <View>
-          <Text style={styles.greeting}>Namaste, {displayName} {platformEmoji}</Text>
+          <Text style={styles.greeting}>Namaste, {displayName}</Text>
           <Text style={styles.subtitle}>{copy.taglineEn}</Text>
         </View>
         <TouchableOpacity style={styles.avatarBtn} onPress={() => signOut()}>
@@ -95,17 +109,19 @@ export default function HomeScreen() {
           <Text style={styles.statLabel}>Avg Income</Text>
         </View>
         <View style={styles.statCard}>
-          <Text style={[styles.statValue, bestScore !== null && bestScore >= 80 && { color: colors.success }]}>
-            {bestScore !== null ? `${bestScore}%` : '—'}
+          <Text style={[styles.statValue, bestScore !== null && bestScore >= 75 && { color: colors.success }]}>
+            {bestScore !== null ? (isPhase4 ? `${bestScore}/100` : `${bestScore}%`) : '—'}
           </Text>
-          <Text style={styles.statLabel}>Best Score</Text>
+          <Text style={styles.statLabel}>{isPhase4 ? 'Credit Score' : 'Best Score'}</Text>
         </View>
       </View>
 
       {/* Submissions list or empty state */}
       {submissions.length === 0 ? (
         <View style={styles.emptyCard}>
-          <Text style={styles.emptyEmoji}>📄</Text>
+          <View style={{ marginBottom: spacing.md }}>
+            <FileTextIcon size={48} color={colors.textMuted} strokeWidth={1.5} />
+          </View>
           <Text style={styles.emptyTitle}>{copy.emptyStateEn}</Text>
           <Text style={styles.emptyBody}>{copy.emptyStateBody}</Text>
         </View>
@@ -128,32 +144,33 @@ export default function HomeScreen() {
         onPress={() => router.push('/(tabs)/upload')}
         activeOpacity={0.85}
       >
-        <Text style={styles.ctaIcon}>📷</Text>
-        <Text style={styles.ctaText}>{copy.addEarnings}</Text>
+        <PlusIcon size={20} color="#fff" strokeWidth={2.5} />
+        <Text style={styles.ctaText}>Statement Upload Karein</Text>
       </TouchableOpacity>
 
       {/* How it works */}
       <View style={styles.howCard}>
         <Text style={styles.howTitle}>Kaise kaam karta hai?</Text>
-        {[
-          { icon: '📱', step: '01', text: 'Swiggy/Zomato earnings screen ki photo lo' },
-          { icon: '🤖', step: '02', text: 'MiniMax AI income analyse karta hai' },
-          { icon: '📄', step: '03', text: 'Certificate banao — SHA-256 tamper-proof' },
-          { icon: '💬', step: '04', text: 'WhatsApp se lender ko bhejo' },
-        ].map((item) => (
-          <View key={item.step} style={styles.step}>
-            <View style={styles.stepNumber}>
-              <Text style={styles.stepNumText}>{item.step}</Text>
+        {steps.map((item) => {
+          const IconComp = item.Icon;
+          return (
+            <View key={item.Step} style={styles.step}>
+              <View style={styles.stepNumber}>
+                <Text style={styles.stepNumText}>{item.Step}</Text>
+              </View>
+              <View style={styles.stepIconContainer}>
+                <IconComp size={18} color={colors.primary} strokeWidth={2} />
+              </View>
+              <Text style={styles.stepText}>{item.Text}</Text>
             </View>
-            <Text style={styles.stepIcon}>{item.icon}</Text>
-            <Text style={styles.stepText}>{item.text}</Text>
-          </View>
-        ))}
+          );
+        })}
       </View>
 
       {/* Trust strip */}
       <View style={styles.trustStrip}>
-        <Text style={styles.trustText}>🔒 SHA-256 Tamper Proof  •  🇮🇳 India Ready  •  ✅ NBFC Accepted</Text>
+        <ShieldCheckIcon size={14} color="#10B981" strokeWidth={2.5} />
+        <Text style={styles.trustText}>Tamper Proof  •  8-Signal Credit Score  •  NBFC Accepted</Text>
       </View>
     </ScrollView>
   );
@@ -185,8 +202,8 @@ const styles = StyleSheet.create({
   step:               { flexDirection: 'row', alignItems: 'center', marginBottom: spacing.sm, gap: spacing.sm },
   stepNumber:         { width: 28, height: 28, borderRadius: 14, backgroundColor: colors.primary + '20', justifyContent: 'center', alignItems: 'center' },
   stepNumText:        { fontSize: 11, fontWeight: '800', color: colors.primary },
-  stepIcon:           { fontSize: 20 },
-  stepText:           { fontSize: 14, color: colors.textMuted, flex: 1, lineHeight: 20 },
-  trustStrip:         { backgroundColor: '#F0FDF4', borderRadius: radius.md, padding: spacing.sm, borderWidth: 1, borderColor: '#DCFCE7' },
-  trustText:          { fontSize: 12, color: '#16A34A', textAlign: 'center', fontWeight: '600' },
+  stepIconContainer:  { width: 24, alignItems: 'center' },
+  stepText:           { fontSize: 13, color: colors.textMuted, flex: 1, lineHeight: 18 },
+  trustStrip:         { backgroundColor: '#0B251B', borderRadius: radius.md, padding: spacing.sm, borderWidth: 1, borderColor: '#10B98135', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
+  trustText:          { fontSize: 12, color: '#10B981', fontWeight: '600' },
 });

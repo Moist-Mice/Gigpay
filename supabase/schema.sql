@@ -78,3 +78,25 @@ ALTER TABLE verifications      DISABLE ROW LEVEL SECURITY;
 --   screenshots  — Private, 10MB max, MIME: image/jpeg,image/png,image/webp
 --   pdfs         — Public,  5MB max,  MIME: application/pdf
 -- ============================================================
+
+-- ============================================================
+-- PHASE 4: Bank Statement Credit Scoring Engine
+-- Run these ALTERs after initial schema is set up.
+-- ============================================================
+ALTER TABLE income_submissions ADD COLUMN IF NOT EXISTS
+  statement_type TEXT CHECK (statement_type IN ('bank', 'credit_card', 'both'));
+
+ALTER TABLE income_submissions ADD COLUMN IF NOT EXISTS
+  income_stability_score NUMERIC;   -- 0-100
+
+ALTER TABLE income_submissions ADD COLUMN IF NOT EXISTS
+  debt_to_income_ratio NUMERIC;     -- 0.0-1.0
+
+ALTER TABLE income_submissions ADD COLUMN IF NOT EXISTS
+  savings_rate NUMERIC;             -- 0.0-1.0
+
+ALTER TABLE income_submissions ADD COLUMN IF NOT EXISTS
+  composite_credit_score NUMERIC;   -- 0-100 composite
+
+ALTER TABLE income_submissions ADD COLUMN IF NOT EXISTS
+  loan_eligibility_estimate NUMERIC; -- ₹ amount

@@ -1,4 +1,4 @@
-import { useSignIn, useSignUp } from '@clerk/clerk-expo';
+import { useSignIn, useSignUp } from '../../lib/clerk';
 import { useState, useRef, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
@@ -51,16 +51,22 @@ export default function OTPScreen() {
         if (result.status === 'complete') {
           await setSignInActive!({ session: result.createdSessionId });
 
-          // Check if user has a profile in our DB
+          // Check if user has a profile AND if clerk_user_id is correct
           const { data: existingUser } = await supabase
             .from('users')
-            .select('id')
+            .select('id, clerk_user_id')
             .eq('phone', '+91' + phone)
             .maybeSingle();
 
-          if (existingUser) {
+          // Expected clerk_user_id for this phone in mock mode
+          const expectedClerkId = `mock_user_${phone}`;
+
+          if (existingUser && existingUser.clerk_user_id === expectedClerkId) {
+            // Everything matches — go home
             router.replace('/(tabs)/home');
           } else {
+            // No profile yet OR clerk_user_id mismatch (corrupted row) — go to onboarding
+            // name.tsx will repair the mismatch via upsert
             router.replace({ pathname: '/onboarding/name', params: { phone } });
           }
         }
@@ -200,9 +206,9 @@ const styles = StyleSheet.create({
   boldPhone:      { fontWeight: '700', color: colors.text },
   otpRow:         { flexDirection: 'row', justifyContent: 'space-between', marginBottom: spacing.md, gap: spacing.sm },
   otpBox:         { flex: 1, aspectRatio: 0.9, borderWidth: 2, borderColor: colors.border, borderRadius: radius.md, textAlign: 'center', fontSize: 26, fontWeight: '800', color: colors.text, backgroundColor: colors.card },
-  otpBoxFocused:  { borderColor: colors.primary, backgroundColor: '#FFF7ED' },
-  otpBoxFilled:   { borderColor: colors.primaryDark, backgroundColor: '#FFF7ED' },
-  otpBoxError:    { borderColor: colors.danger, backgroundColor: '#FEF2F2' },
+  otpBoxFocused:  { borderColor: colors.primary, backgroundColor: colors.surfaceOrange },
+  otpBoxFilled:   { borderColor: colors.primaryDark, backgroundColor: colors.surfaceOrange },
+  otpBoxError:    { borderColor: colors.danger, backgroundColor: '#2C1A1A' },
   error:          { color: colors.danger, marginBottom: spacing.md, textAlign: 'center', fontSize: 14, fontWeight: '500' },
   button:         { backgroundColor: colors.primary, borderRadius: radius.md, paddingVertical: 16, alignItems: 'center', marginBottom: spacing.md, shadowColor: colors.primary, shadowOpacity: 0.35, shadowRadius: 8, shadowOffset: { width: 0, height: 4 }, elevation: 4 },
   buttonDisabled: { opacity: 0.45 },

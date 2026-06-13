@@ -1,8 +1,9 @@
-import { ClerkProvider, useAuth } from '@clerk/clerk-expo';
+import { ClerkProvider, useAuth } from '../lib/clerk';
 import { Slot, useRouter, useSegments } from 'expo-router';
 import * as SecureStore from 'expo-secure-store';
 import { useEffect } from 'react';
 import { ActivityIndicator, View, Text, ScrollView, StyleSheet } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
 import { colors } from '../constants/theme';
 
 // Secure token cache so Clerk session persists between app restarts
@@ -52,7 +53,9 @@ function AuthGate() {
 }
 
 export default function RootLayout() {
-  const publishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY;
+  const publishableKey = process.env.EXPO_PUBLIC_USE_MOCK_CLERK === 'true'
+    ? (process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY || 'mock_publishable_key')
+    : process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY;
 
   if (!publishableKey) {
     return (
@@ -86,6 +89,7 @@ export default function RootLayout() {
       publishableKey={publishableKey}
       tokenCache={tokenCache}
     >
+      <StatusBar style="light" />
       <AuthGate />
     </ClerkProvider>
   );

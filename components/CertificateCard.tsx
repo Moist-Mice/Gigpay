@@ -3,6 +3,7 @@ import { useRouter } from 'expo-router';
 import { colors, spacing, radius } from '../constants/theme';
 import { Certificate } from '../lib/types';
 import { formatRupees } from '../lib/intelligence';
+import { ShieldCheckIcon } from './Icons';
 
 interface CertificateCardProps {
   certificate: Certificate;
@@ -28,42 +29,45 @@ export function CertificateCard({ certificate, avgMonthly, platform }: Certifica
     <TouchableOpacity
       style={styles.card}
       onPress={() => router.push({ pathname: '/certificate/[id]', params: { id: certificate.human_id } })}
-      activeOpacity={0.8}
+      activeOpacity={0.85}
     >
       {/* Top row */}
       <View style={styles.topRow}>
         <View style={[styles.platformDot, { backgroundColor: platformColor }]} />
         <Text style={styles.humanId}>{certificate.human_id}</Text>
         <View style={styles.verifiedBadge}>
-          <Text style={styles.verifiedText}>✓ Verified</Text>
+          <ShieldCheckIcon size={12} color={colors.success} strokeWidth={2.5} />
+          <Text style={styles.verifiedText}>Verified</Text>
         </View>
       </View>
 
       {/* Stats */}
       {avgMonthly !== undefined && (
-        <Text style={styles.income}>Avg: {formatRupees(avgMonthly)}/month</Text>
+        <Text style={styles.income}>Avg: {formatRupees(avgMonthly)}<Text style={styles.perMonth}>/mo</Text></Text>
       )}
 
       {/* Footer */}
       <View style={styles.footer}>
         <Text style={styles.date}>
-          {new Date(certificate.issued_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+          Issued {new Date(certificate.issued_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
         </Text>
-        <Text style={styles.views}>{certificate.verified_count} views</Text>
+        <Text style={styles.views}>{certificate.verified_count} scans</Text>
       </View>
     </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
-  card:          { backgroundColor: colors.card, borderRadius: radius.lg, padding: spacing.md, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.sm, shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 2 },
+  card:          { backgroundColor: colors.card, borderRadius: radius.lg, padding: spacing.md, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.sm },
   topRow:        { flexDirection: 'row', alignItems: 'center', marginBottom: spacing.sm, gap: spacing.sm },
-  platformDot:   { width: 10, height: 10, borderRadius: 5 },
-  humanId:       { flex: 1, fontSize: 13, fontWeight: '700', color: colors.text, fontFamily: 'monospace' },
-  verifiedBadge: { backgroundColor: '#DCFCE7', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2 },
-  verifiedText:  { fontSize: 11, fontWeight: '700', color: colors.success },
-  income:        { fontSize: 20, fontWeight: '800', color: colors.text, marginBottom: spacing.sm },
-  footer:        { flexDirection: 'row', justifyContent: 'space-between' },
-  date:          { fontSize: 12, color: colors.textMuted },
-  views:         { fontSize: 12, color: colors.textMuted },
+  platformDot:   { width: 8, height: 8, borderRadius: 4 },
+  humanId:       { flex: 1, fontSize: 13, fontWeight: '700', color: colors.text, fontFamily: 'monospace', letterSpacing: 0.5 },
+  verifiedBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(16, 185, 129, 0.12)', borderWidth: 1, borderColor: 'rgba(16, 185, 129, 0.3)', borderRadius: 12, paddingHorizontal: 8, paddingVertical: 3, gap: 4 },
+  verifiedText:  { fontSize: 10, fontWeight: '800', color: colors.success, letterSpacing: 0.3, textTransform: 'uppercase' },
+  income:        { fontSize: 20, fontWeight: '800', color: colors.text, marginBottom: spacing.sm, letterSpacing: -0.2 },
+  perMonth:      { fontSize: 14, color: colors.textMuted, fontWeight: '400' },
+  footer:        { flexDirection: 'row', justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: colors.border + '50', paddingTop: spacing.sm },
+  date:          { fontSize: 11, color: colors.textMuted },
+  views:         { fontSize: 11, color: colors.textMuted },
 });
+

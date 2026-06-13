@@ -1,4 +1,4 @@
-import { useUser } from '@clerk/clerk-expo';
+import { useUser } from '../../lib/clerk';
 import { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
@@ -31,13 +31,34 @@ export default function NameScreen() {
     setLoading(true);
     setError('');
     try {
-      const { error: insertError } = await supabase.from('users').insert({
-        clerk_user_id: user!.id,
-        phone: '+91' + phone,
-        name: name.trim(),
-        platform,
-      });
-      if (insertError) throw insertError;
+      const fullPhone = '+91' + phone;
+      const clerkId  = user!.id; // mock_user_{phone}
+
+      // 1. Repair: if a row exists for this phone with a different clerk_user_id, fix it
+      const { data: existingByPhone } = await supabase
+        .from('users')
+        .select('id, clerk_user_id')
+        .eq('phone', fullPhone)
+        .maybeSingle();
+
+      if (existingByPhone && existingByPhone.clerk_user_id !== clerkId) {
+        // Update the old row to use the correct clerk_user_id
+        await supabase
+          .from('users')
+          .update({ clerk_user_id: clerkId, name: name.trim(), platform })
+          .eq('id', existingByPhone.id);
+        router.replace('/(tabs)/home');
+        return;
+      }
+
+      // 2. Normal upsert (handles fresh sign-up AND re-onboarding)
+      const { error: upsertError } = await supabase
+        .from('users')
+        .upsert(
+          { clerk_user_id: clerkId, phone: fullPhone, name: name.trim(), platform },
+          { onConflict: 'clerk_user_id' }
+        );
+      if (upsertError) throw upsertError;
       router.replace('/(tabs)/home');
     } catch (e: any) {
       setError(e.message || 'Profile save nahi ho paya. Dobara try karein.');

@@ -1,8 +1,9 @@
 // @ts-nocheck
 // supabase/functions/generate-certificate/index.ts
-// Deno Edge Function — generates tamper-proof PDF certificate
+// Deno Edge Function — generates tamper-proof PDF certificate (Phase 4 updated)
 // 1. Verify Clerk JWT  2. Load submission + user  3. Build PDF (pdf-lib)
 // 4. SHA-256 hash  5. Upload to pdfs/ bucket  6. Save certificates row
+// Phase 4: Certificate now includes composite credit score, loan eligibility, debt ratio, savings rate
 // NOTE: @ts-nocheck suppresses Node TS server errors — this file runs on Deno, not Node.
 
 import { createClient } from "npm:@supabase/supabase-js@2";
@@ -57,6 +58,12 @@ async function buildCertificatePDF(params: {
   sha256Hash: string;
   verifyUrl: string;
   issuedAt: string;
+  // Phase 4 fields (optional — null for old submissions)
+  compositeCreditScore?: number | null;
+  loanEligibility?: number | null;
+  debtRatio?: number | null;
+  savingsRate?: number | null;
+  statementType?: string | null;
 }): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.create();
   const page = pdfDoc.addPage([595, 842]);
@@ -82,7 +89,10 @@ async function buildCertificatePDF(params: {
   // ── 1. Orange header strip (80pt) ─────────────────────────────────────────
   page.drawRectangle({ x: 0, y: height - 80, width, height: 80, color: orange });
   page.drawText('GigPay', { x: 32, y: height - 48, font: fontBold, size: 28, color: white });
-  page.drawText('Income Verification Certificate', { x: 32, y: height - 66, font: fontRegular, size: 11, color: white });
+  const headerSub = params.compositeCreditScore != null
+    ? 'Income & Credit Analysis Certificate'
+    : 'Income Verification Certificate';
+  page.drawText(headerSub, { x: 32, y: height - 66, font: fontRegular, size: 11, color: white });
   const idWidth = fontMono.widthOfTextAtSize(params.humanId, 10);
   page.drawText(params.humanId, { x: width - idWidth - 32, y: height - 52, font: fontMono, size: 10, color: white });
   y = height - 80;
@@ -110,39 +120,86 @@ async function buildCertificatePDF(params: {
   page.drawLine({ start: { x: 32, y }, end: { x: width - 32, y }, thickness: 0.5, color: border });
   y -= 20;
 
-  // ── 4. 3-metric block ──────────────────────────────────────────────────────
-  page.drawText('Income Summary', { x: 32, y, font: fontBold, size: 11, color: muted });
-  y -= 28;
-
-  const metricW = (width - 64) / 3;
-  const metrics = [
-    { label: 'Avg Monthly Income', value: `Rs.${params.avgMonthly.toLocaleString('en-IN')}`, color: dark },
-    {
-      label: 'Income Trend',
-      value: `${params.trendPct >= 0 ? '+' : ''}${params.trendPct.toFixed(1)}%`,
-      color: params.trendPct >= 0 ? success : danger,
-    },
-    {
-      label: 'Consistency Score',
-      value: `${params.consistencyScore}/100`,
-      color: params.consistencyScore >= 80 ? success : params.consistencyScore >= 60 ? warning : danger,
-    },
-  ];
-
-  for (let i = 0; i < metrics.length; i++) {
-    const mx = 32 + i * metricW;
-    page.drawText(metrics[i].value, { x: mx, y, font: fontBold, size: 20, color: metrics[i].color });
-    page.drawText(metrics[i].label, { x: mx, y: y - 16, font: fontRegular, size: 9, color: muted });
-  }
-  y -= 44;
-
-  // NBFC Verdict badge
+  // ── 4. Metric block (Phase 4: credit score + 3 cols; Phase 1-3: classic 3 metrics) ────────
   const verdictColors: Record<string, typeof success> = { STRONG: success, MODERATE: warning, WEAK: danger };
   const verdictColor = verdictColors[params.nbfcVerdict] ?? danger;
-  const verdictText = `NBFC Verdict: ${params.nbfcVerdict}`;
-  page.drawRectangle({ x: 32, y: y - 6, width: 160, height: 22, color: rgb(0.95, 0.95, 0.95) });
-  page.drawText(verdictText, { x: 40, y, font: fontBold, size: 11, color: verdictColor });
-  y -= 24;
+
+  if (params.compositeCreditScore != null) {
+    // ── Phase 4 layout: Credit Score banner + 3-col row ──
+    page.drawText('Credit Score', { x: 32, y, font: fontBold, size: 11, color: muted });
+    y -= 28;
+    const scoreStr = `${Math.round(params.compositeCreditScore)}/100`;
+    const scoreColor = params.compositeCreditScore >= 75 ? success : params.compositeCreditScore >= 50 ? warning : danger;
+    page.drawText(scoreStr, { x: 32, y, font: fontBold, size: 28, color: scoreColor });
+    // Visual bar: 20 segments
+    const filled = Math.round((params.compositeCreditScore / 100) * 20);
+    const bar = Array.from({ length: 20 }, (_, i) => i < filled ? '|' : '.').join('');
+    page.drawText(bar, { x: 120, y: y + 4, font: fontMono, size: 11, color: scoreColor });
+    const verdictLabel = params.nbfcVerdict === 'STRONG' ? 'STRONG PROFILE'
+      : params.nbfcVerdict === 'MODERATE' ? 'MODERATE PROFILE' : 'WEAK PROFILE';
+    page.drawRectangle({ x: 360, y: y - 4, width: 130, height: 22, color: scoreColor });
+    page.drawText(verdictLabel, { x: 368, y, font: fontBold, size: 10, color: white });
+    y -= 32;
+
+    // 3-col: Avg Income | Debt Ratio | Savings Rate
+    const metricW = (width - 64) / 3;
+    const p4Metrics = [
+      { label: 'Avg Monthly Income', value: `Rs.${params.avgMonthly.toLocaleString('en-IN')}`, color: dark },
+      {
+        label: 'Debt-to-Income',
+        value: params.debtRatio != null ? `${Math.round(params.debtRatio * 100)}%` : 'N/A',
+        color: (params.debtRatio ?? 0) < 0.35 ? success : warning,
+      },
+      {
+        label: 'Savings Rate',
+        value: params.savingsRate != null ? `${Math.round(params.savingsRate * 100)}%` : 'N/A',
+        color: (params.savingsRate ?? 0) >= 0.2 ? success : warning,
+      },
+    ];
+    for (let i = 0; i < p4Metrics.length; i++) {
+      const mx = 32 + i * metricW;
+      page.drawText(p4Metrics[i].value, { x: mx, y, font: fontBold, size: 18, color: p4Metrics[i].color });
+      page.drawText(p4Metrics[i].label, { x: mx, y: y - 14, font: fontRegular, size: 9, color: muted });
+    }
+    y -= 36;
+
+    // Loan eligibility row
+    if (params.loanEligibility && params.loanEligibility > 0) {
+      page.drawText('LOAN ELIGIBILITY ESTIMATE:', { x: 32, y, font: fontBold, size: 10, color: muted });
+      page.drawText(`Up to Rs.${params.loanEligibility.toLocaleString('en-IN')}`, {
+        x: 200, y, font: fontBold, size: 14, color: success
+      });
+      y -= 20;
+    }
+  } else {
+    // ── Classic Phase 1-3 layout ──
+    page.drawText('Income Summary', { x: 32, y, font: fontBold, size: 11, color: muted });
+    y -= 28;
+    const metricW = (width - 64) / 3;
+    const metrics = [
+      { label: 'Avg Monthly Income', value: `Rs.${params.avgMonthly.toLocaleString('en-IN')}`, color: dark },
+      {
+        label: 'Income Trend',
+        value: `${params.trendPct >= 0 ? '+' : ''}${params.trendPct.toFixed(1)}%`,
+        color: params.trendPct >= 0 ? success : danger,
+      },
+      {
+        label: 'Consistency Score',
+        value: `${params.consistencyScore}/100`,
+        color: params.consistencyScore >= 80 ? success : params.consistencyScore >= 60 ? warning : danger,
+      },
+    ];
+    for (let i = 0; i < metrics.length; i++) {
+      const mx = 32 + i * metricW;
+      page.drawText(metrics[i].value, { x: mx, y, font: fontBold, size: 20, color: metrics[i].color });
+      page.drawText(metrics[i].label, { x: mx, y: y - 16, font: fontRegular, size: 9, color: muted });
+    }
+    y -= 44;
+    const verdictText = `NBFC Verdict: ${params.nbfcVerdict}`;
+    page.drawRectangle({ x: 32, y: y - 6, width: 160, height: 22, color: rgb(0.95, 0.95, 0.95) });
+    page.drawText(verdictText, { x: 40, y, font: fontBold, size: 11, color: verdictColor });
+    y -= 24;
+  }
 
   // ── 5. Divider ─────────────────────────────────────────────────────────────
   y -= 12;
@@ -324,20 +381,25 @@ Deno.serve(async (req) => {
     // Web verify URL for the PDF text (browser fallback)
     const webVerifyUrl = `${appUrl}/verify/${humanId}`;
 
-    // ── Build PDF ─────────────────────────────────────────────────────────────
+    // ── Build PDF (Phase 4 fields passed through if present) ─────────────────
     const pdfBytes = await buildCertificatePDF({
       humanId,
-      workerName:       submission.users.name,
-      phone:            submission.users.phone,
-      platform:         submission.platform,
-      avgMonthly:       submission.avg_monthly_income,
-      trendPct:         submission.trend_pct,
-      consistencyScore: submission.consistency_score,
-      nbfcVerdict:      submission.nbfc_verdict,
-      monthsData:       submission.months_data,
+      workerName:            submission.users.name,
+      phone:                 submission.users.phone,
+      platform:              submission.platform,
+      avgMonthly:            submission.avg_monthly_income,
+      trendPct:              submission.trend_pct,
+      consistencyScore:      submission.consistency_score,
+      nbfcVerdict:           submission.nbfc_verdict,
+      monthsData:            submission.months_data,
       sha256Hash,
-      verifyUrl:        webVerifyUrl,
+      verifyUrl:             webVerifyUrl,
       issuedAt,
+      compositeCreditScore:  submission.composite_credit_score ?? null,
+      loanEligibility:       submission.loan_eligibility_estimate ?? null,
+      debtRatio:             submission.debt_to_income_ratio ?? null,
+      savingsRate:           submission.savings_rate ?? null,
+      statementType:         submission.statement_type ?? null,
     });
 
     // ── Upload PDF to Supabase Storage (pdfs bucket — public) ─────────────────

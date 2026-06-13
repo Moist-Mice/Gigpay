@@ -1,7 +1,7 @@
 // lib/share.ts
 // PDF download from Supabase Storage + WhatsApp / system share sheet
 
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { Alert, Linking } from 'react-native';
 

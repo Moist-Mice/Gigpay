@@ -1,112 +1,116 @@
-// app/(tabs)/upload.tsx
-import { useState, useRef } from 'react';
+// app/(tabs)/upload.tsx — Phase 4: Bank Statement PDF upload
+import { useState } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet,
-  ActivityIndicator, Alert, Image, ScrollView,
+  ActivityIndicator, Alert, ScrollView,
 } from 'react-native';
-import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
 import { useRouter } from 'expo-router';
-import { useAuth, useUser } from '@clerk/clerk-expo';
+import { useAuth, useUser } from '../../lib/clerk';
 import { supabase } from '../../lib/supabase';
-import { uploadAndParse } from '../../lib/upload';
+import { pdfToBase64, checkPdfSize } from '../../lib/pdf-extract';
 import { colors, spacing, radius } from '../../constants/theme';
 import { copy } from '../../constants/copy';
+import {
+  BankIcon,
+  CreditCardIcon,
+  FileTextIcon,
+  RobotIcon,
+  TrendingUpIcon,
+  DollarIcon,
+  PercentIcon,
+  CheckIcon,
+  SparklesIcon,
+  AlertTriangleIcon,
+} from '../../components/Icons';
 
-// Demo data — loaded on long-press (bypass camera for hackathon demo)
-const DEMO_MONTHS = [
-  { period: '2025-01', amount: 16800, trips: 212 },
-  { period: '2025-02', amount: 17200, trips: 218 },
-  { period: '2025-03', amount: 18100, trips: 229 },
-  { period: '2025-04', amount: 17900, trips: 226 },
-  { period: '2025-05', amount: 19200, trips: 243 },
-  { period: '2025-06', amount: 18400, trips: 233 },
+const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL!;
+const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
+
+// Mock bank data for demo mode (long-press)
+const MOCK_MONTHS = [
+  { month: '2025-01', total_credits: 34200, total_debits: 26800, emi_payments: 8500, upi_credits: 18, closing_balance: 12400, salary_credits: 0, gig_credits: 12 },
+  { month: '2025-02', total_credits: 36800, total_debits: 27200, emi_payments: 8500, upi_credits: 22, closing_balance: 15600, salary_credits: 0, gig_credits: 15 },
+  { month: '2025-03', total_credits: 38100, total_debits: 28900, emi_payments: 8500, upi_credits: 24, closing_balance: 17200, salary_credits: 0, gig_credits: 18 },
+  { month: '2025-04', total_credits: 35600, total_debits: 27100, emi_payments: 8500, upi_credits: 20, closing_balance: 16100, salary_credits: 0, gig_credits: 14 },
+  { month: '2025-05', total_credits: 41200, total_debits: 29800, emi_payments: 8500, upi_credits: 28, closing_balance: 19600, salary_credits: 0, gig_credits: 22 },
+  { month: '2025-06', total_credits: 39400, total_debits: 28400, emi_payments: 8500, upi_credits: 25, closing_balance: 22100, salary_credits: 0, gig_credits: 20 },
 ];
 
 type Stage = 'idle' | 'picked' | 'uploading' | 'parsing' | 'done' | 'error';
+type StatementType = 'bank' | 'credit_card';
 
 export default function UploadScreen() {
   const router = useRouter();
   const { getToken } = useAuth();
   const { user } = useUser();
   const [stage, setStage] = useState<Stage>('idle');
-  const [imageUri, setImageUri] = useState<string | null>(null);
+  const [pdfUri, setPdfUri] = useState<string | null>(null);
+  const [pdfName, setPdfName] = useState<string | null>(null);
+  const [statementType, setStatementType] = useState<StatementType>('bank');
   const [statusMsg, setStatusMsg] = useState('');
   const [error, setError] = useState('');
-  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ── Pick image from camera ────────────────────────────────────────────────
-  async function handleCamera() {
-    const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission needed', 'GigPay needs camera access to photograph your earnings screen.');
-      return;
-    }
-    const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.9,
-      allowsEditing: false,
-    });
-    if (!result.canceled && result.assets[0]) {
-      setImageUri(result.assets[0].uri);
+  // ── Pick PDF ────────────────────────────────────────────────────────────────
+  async function handlePickPDF() {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: 'application/pdf',
+        copyToCacheDirectory: true,
+      });
+      if (result.canceled || !result.assets?.[0]) return;
+      const asset = result.assets[0];
+
+      // Size check
+      const sizeWarning = await checkPdfSize(asset.uri);
+      if (sizeWarning) {
+        Alert.alert('File too large', sizeWarning);
+        return;
+      }
+
+      setPdfUri(asset.uri);
+      setPdfName(asset.name);
       setStage('picked');
+      setError('');
+    } catch (e: any) {
+      Alert.alert('Could not pick file', e.message ?? 'Try again');
     }
   }
 
-  // ── Pick image from gallery ───────────────────────────────────────────────
-  async function handleGallery() {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission needed', 'GigPay needs gallery access to select your earnings screenshot.');
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.9,
-      allowsEditing: false,
-    });
-    if (!result.canceled && result.assets[0]) {
-      setImageUri(result.assets[0].uri);
-      setStage('picked');
-    }
-  }
-
-  // ── Upload + parse ────────────────────────────────────────────────────────
+  // ── Upload + Parse PDF ──────────────────────────────────────────────────────
   async function handleProcess() {
-    if (!imageUri || !user) return;
+    if (!pdfUri || !user) return;
     setStage('uploading');
+    setStatusMsg('Statement read ho raha hai...');
     setError('');
 
     try {
-      // Fetch user record from DB to get our internal user_id
-      const { data: dbUser } = await supabase
-        .from('users')
-        .select('id, platform')
-        .eq('clerk_user_id', user.id)
-        .single();
-
-      if (!dbUser) throw new Error('User profile not found. Please complete onboarding.');
-
-      setStatusMsg(copy.processingSteps[0]); // "Reading your earnings..."
-      setStage('uploading');
-
       const token = await getToken();
       if (!token) throw new Error('Authentication failed. Please sign in again.');
 
-      setStatusMsg(copy.processingSteps[1]); // "AI is analysing the data..."
+      setStatusMsg('PDF base64 mein convert ho raha hai...');
+      const pdf_base64 = await pdfToBase64(pdfUri);
+
       setStage('parsing');
+      setStatusMsg('AI bank data extract kar raha hai...');
 
-      const submission = await uploadAndParse(
-        imageUri,
-        token,
-        dbUser.id,
-        dbUser.platform,
-      );
+      const response = await fetch(`${SUPABASE_URL}/functions/v1/parse-statement`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'apikey': SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({ pdf_base64, statement_type: statementType }),
+      });
 
-      setStatusMsg(copy.processingSteps[2]); // "Calculating your income score..."
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error ?? `Parse failed: ${response.status}`);
+      }
 
-      // Navigate to results screen
-      const resultId = (submission as any).submission_id ?? (submission as any).id;
-      router.push(`/results/${resultId}` as any);
+      const data = await response.json();
+      router.push(`/results/${data.submission_id}` as any);
 
     } catch (e: any) {
       setError(e.message ?? 'Something went wrong. Please try again.');
@@ -114,42 +118,52 @@ export default function UploadScreen() {
     }
   }
 
-  // ── Demo mode (long-press CTA) — bypass camera ───────────────────────────
+  // ── Demo Mode (long-press) ──────────────────────────────────────────────────
   async function handleDemoMode() {
     if (!user) return;
     setStage('parsing');
-    setStatusMsg('Loading demo data...');
+    setStatusMsg('Demo data load ho raha hai...');
+    setError('');
+
     try {
-      const { data: dbUser } = await supabase
-        .from('users')
-        .select('id, platform')
-        .eq('clerk_user_id', user.id)
-        .single();
+      const token = await getToken();
+      if (!token) throw new Error('Authentication failed.');
 
-      if (!dbUser) throw new Error('User profile not found.');
+      const response = await fetch(`${SUPABASE_URL}/functions/v1/parse-statement`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'apikey': SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({ use_mock: true, statement_type: 'bank' }),
+      });
 
-      // Insert demo submission directly (no AI call needed)
-      const avg = Math.round(DEMO_MONTHS.reduce((s, m) => s + m.amount, 0) / DEMO_MONTHS.length);
-      const { data: submission } = await supabase
-        .from('income_submissions')
-        .insert({
-          user_id: dbUser.id,
-          platform: 'swiggy',
-          screenshot_url: 'demo://mock',
-          months_data: DEMO_MONTHS,
-          avg_monthly_income: avg,
-          trend_pct: 2.3,
-          consistency_score: 100,
-          seasonality_flags: [],
-          nbfc_verdict: 'STRONG',
-          status: 'complete',
-        })
-        .select()
-        .single();
+      if (!response.ok) {
+        // Fallback: direct Supabase insert if edge function not deployed
+        const { data: dbUser } = await supabase
+          .from('users').select('id').eq('clerk_user_id', user.id).single();
+        if (!dbUser) throw new Error('User profile not found.');
 
-      if (submission) {
-        router.push(`/results/${submission.id}` as any);
+        const months_data = MOCK_MONTHS.map(m => ({ period: m.month, amount: m.total_credits }));
+        const avgIncome = Math.round(MOCK_MONTHS.reduce((s, m) => s + m.total_credits, 0) / MOCK_MONTHS.length);
+
+        const { data: sub } = await supabase.from('income_submissions').insert({
+          user_id: dbUser.id, platform: 'other', screenshot_url: 'pdf://demo',
+          months_data, avg_monthly_income: avgIncome, trend_pct: 3.2,
+          consistency_score: 88, seasonality_flags: [], nbfc_verdict: 'STRONG',
+          status: 'complete', statement_type: 'bank',
+          income_stability_score: 85, debt_to_income_ratio: 0.25,
+          savings_rate: 0.22, composite_credit_score: 74, loan_eligibility_estimate: 190000,
+        }).select().single();
+
+        if (sub) router.push(`/results/${sub.id}` as any);
+        return;
       }
+
+      const data = await response.json();
+      router.push(`/results/${data.submission_id}` as any);
+
     } catch (e: any) {
       setError(e.message);
       setStage('error');
@@ -158,34 +172,78 @@ export default function UploadScreen() {
 
   const isProcessing = stage === 'uploading' || stage === 'parsing';
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  const analysisSignals = [
+    { Icon: TrendingUpIcon, label: 'Income Stability Score', color: colors.primary },
+    { Icon: DollarIcon, label: 'Avg Monthly Credits', color: '#60A5FA' },
+    { Icon: BankIcon, label: 'Debt-to-Income Ratio', color: '#F87171' },
+    { Icon: PercentIcon, label: 'Savings Rate', color: '#34D399' },
+    { Icon: CheckIcon, label: 'Payment Discipline', color: '#A78BFA' },
+    { Icon: SparklesIcon, label: 'Composite Credit Score (0–100)', color: '#FBBF24' },
+  ];
+
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>Kamai Add Karein</Text>
-      <Text style={styles.subtitle}>Swiggy, Zomato, ya Rapido ki earnings screen ki photo khichein</Text>
+      <Text style={styles.title}>Statement Upload Karein</Text>
+      <Text style={styles.subtitle}>Apna bank ya credit card statement PDF upload karein — AI credit score calculate karega</Text>
 
-      {/* Image preview */}
-      {imageUri && (
-        <View style={styles.previewContainer}>
-          <Image source={{ uri: imageUri }} style={styles.preview} resizeMode="contain" />
-          <TouchableOpacity style={styles.changeBtn} onPress={() => { setImageUri(null); setStage('idle'); }}>
-            <Text style={styles.changeBtnText}>Change Photo</Text>
-          </TouchableOpacity>
+      {/* Statement Type Selector */}
+      {stage === 'idle' && (
+        <View style={styles.typeRow}>
+          {(['bank', 'credit_card'] as StatementType[]).map(t => {
+            const isSelected = statementType === t;
+            return (
+              <TouchableOpacity
+                key={t}
+                style={[styles.typeCard, isSelected && styles.typeCardActive]}
+                onPress={() => setStatementType(t)}
+                activeOpacity={0.7}
+              >
+                <View style={styles.typeIconContainer}>
+                  {t === 'bank' ? (
+                    <BankIcon size={28} color={isSelected ? colors.primary : colors.textMuted} strokeWidth={2} />
+                  ) : (
+                    <CreditCardIcon size={28} color={isSelected ? colors.primary : colors.textMuted} strokeWidth={2} />
+                  )}
+                </View>
+                <Text style={[styles.typeLabel, isSelected && styles.typeLabelActive]}>
+                  {t === 'bank' ? 'Bank Statement' : 'Credit Card'}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
         </View>
       )}
 
-      {/* Idle state — pick source */}
+      {/* Idle — pick PDF */}
       {stage === 'idle' && (
-        <View style={styles.pickerRow}>
-          <TouchableOpacity style={styles.pickerCard} onPress={handleCamera}>
-            <Text style={styles.pickerIcon}>📷</Text>
-            <Text style={styles.pickerLabel}>Take Photo</Text>
-            <Text style={styles.pickerSub}>Camera se photo lo</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.pickerCard} onPress={handleGallery}>
-            <Text style={styles.pickerIcon}>🖼️</Text>
-            <Text style={styles.pickerLabel}>Gallery</Text>
-            <Text style={styles.pickerSub}>Screenshot select karo</Text>
+        <TouchableOpacity
+          style={styles.pickCard}
+          onPress={handlePickPDF}
+          onLongPress={handleDemoMode}
+          delayLongPress={1500}
+          activeOpacity={0.8}
+        >
+          <View style={styles.pickIconContainer}>
+            <FileTextIcon size={44} color={colors.primary} strokeWidth={1.5} />
+          </View>
+          <Text style={styles.pickLabel}>PDF Select Karein</Text>
+          <Text style={styles.pickSub}>Bank/CC statement · 6 months recommended</Text>
+          <View style={styles.pickBadge}><Text style={styles.pickBadgeText}>TAP TO PICK</Text></View>
+        </TouchableOpacity>
+      )}
+
+      {/* File picked preview */}
+      {stage === 'picked' && pdfName && (
+        <View style={styles.fileCard}>
+          <FileTextIcon size={24} color={colors.primary} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.fileName} numberOfLines={1}>{pdfName}</Text>
+            <Text style={styles.fileType}>
+              {statementType === 'bank' ? 'Bank Statement' : 'Credit Card Statement'}
+            </Text>
+          </View>
+          <TouchableOpacity onPress={() => { setPdfUri(null); setPdfName(null); setStage('idle'); }}>
+            <Text style={styles.fileChange}>Change</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -194,27 +252,29 @@ export default function UploadScreen() {
       {isProcessing && (
         <View style={styles.processingBox}>
           <View style={styles.aiOrb}>
-            <Text style={styles.aiOrbText}>🤖</Text>
+            <RobotIcon size={36} color={colors.primary} strokeWidth={2} />
           </View>
           <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: spacing.md }} />
           <Text style={styles.processingText}>{statusMsg}</Text>
-          <Text style={styles.processingHint}>MiniMax M3 AI analyse kar raha hai • 5–10 seconds</Text>
+          <Text style={styles.processingHint}>Gemma AI 6 months ka data analyse kar raha hai...</Text>
         </View>
       )}
 
-      {/* Error state */}
+      {/* Error */}
       {stage === 'error' && (
         <View style={styles.errorBox}>
-          <Text style={styles.errorIcon}>⚠️</Text>
+          <View style={{ marginBottom: spacing.sm }}>
+            <AlertTriangleIcon size={32} color="#FCA5A5" strokeWidth={2} />
+          </View>
           <Text style={styles.errorText}>{error}</Text>
-          <TouchableOpacity style={styles.retryBtn} onPress={() => { setStage('idle'); setImageUri(null); setError(''); }}>
+          <TouchableOpacity style={styles.retryBtn} onPress={() => { setStage('idle'); setPdfUri(null); setError(''); }}>
             <Text style={styles.retryBtnText}>Try Again</Text>
           </TouchableOpacity>
         </View>
       )}
 
-      {/* Confirm + process CTA */}
-      {stage === 'picked' && imageUri && (
+      {/* Confirm CTA */}
+      {stage === 'picked' && pdfUri && (
         <TouchableOpacity
           style={styles.cta}
           onPress={handleProcess}
@@ -222,28 +282,47 @@ export default function UploadScreen() {
           delayLongPress={1500}
           activeOpacity={0.85}
         >
-          <Text style={styles.ctaText}>{copy.addEarnings}</Text>
+          <Text style={styles.ctaText}>Analyse Karein</Text>
         </TouchableOpacity>
       )}
 
-      {/* Demo shortcut for idle state (long-press) */}
+      {/* Demo hint */}
       {stage === 'idle' && (
         <TouchableOpacity
           style={styles.demoBtn}
           onLongPress={handleDemoMode}
           delayLongPress={1500}
         >
-          <Text style={styles.demoBtnText}>Long-press to load demo data (Raju Kumar / Swiggy)</Text>
+          <Text style={styles.demoBtnText}>Long-press to load demo bank statement</Text>
         </TouchableOpacity>
       )}
 
       {/* Tips */}
       {(stage === 'idle' || stage === 'picked') && (
         <View style={styles.tips}>
-          <Text style={styles.tipsTitle}>📋 Best results ke liye</Text>
-          <Text style={styles.tipItem}>• Sabhi mahine screen pe visible honay chahiye</Text>
-          <Text style={styles.tipItem}>• Phone seedha pakdein — blur se bachein</Text>
-          <Text style={styles.tipItem}>• Earnings amounts clearly readable hon</Text>
+          <Text style={styles.tipsTitle}>Best results ke liye</Text>
+          <Text style={styles.tipItem}>• 3–6 months ka statement use karein</Text>
+          <Text style={styles.tipItem}>• Official bank PDF download karein (net banking se)</Text>
+          <Text style={styles.tipItem}>• Password-protected PDF hata dein pehle</Text>
+          <Text style={styles.tipItem}>• 5MB se bada file use na karein</Text>
+        </View>
+      )}
+
+      {/* What signals */}
+      {stage === 'idle' && (
+        <View style={styles.signalCard}>
+          <Text style={styles.signalTitle}>Kya analyse hoga?</Text>
+          {analysisSignals.map(s => {
+            const SigIcon = s.Icon;
+            return (
+              <View key={s.label} style={styles.signalRow}>
+                <View style={styles.signalIcon}>
+                  <SigIcon size={14} color={s.color} strokeWidth={2.5} />
+                </View>
+                <Text style={styles.signalLabel}>{s.label}</Text>
+              </View>
+            );
+          })}
         </View>
       )}
     </ScrollView>
@@ -251,34 +330,44 @@ export default function UploadScreen() {
 }
 
 const styles = StyleSheet.create({
-  container:        { flex: 1, backgroundColor: colors.background },
-  content:          { padding: spacing.md, paddingBottom: spacing.xl },
-  title:            { fontSize: 24, fontWeight: 'bold', color: colors.text, marginTop: spacing.sm },
-  subtitle:         { fontSize: 14, color: colors.textMuted, marginBottom: spacing.lg, marginTop: 4, lineHeight: 20 },
-  pickerRow:        { flexDirection: 'row', gap: spacing.md, marginBottom: spacing.lg },
-  pickerCard:       { flex: 1, backgroundColor: colors.card, borderRadius: radius.lg, padding: spacing.lg, alignItems: 'center', borderWidth: 1, borderColor: colors.border },
-  pickerIcon:       { fontSize: 36, marginBottom: spacing.sm },
-  pickerLabel:      { fontSize: 14, fontWeight: '700', color: colors.text, textAlign: 'center' },
-  pickerSub:        { fontSize: 11, color: colors.textMuted, textAlign: 'center', marginTop: 2 },
-  previewContainer: { borderRadius: radius.lg, overflow: 'hidden', marginBottom: spacing.md, borderWidth: 1, borderColor: colors.border },
-  preview:          { width: '100%', height: 280, backgroundColor: colors.border },
-  changeBtn:        { padding: spacing.sm, alignItems: 'center', backgroundColor: colors.card },
-  changeBtnText:    { color: colors.primary, fontWeight: '600' },
-  cta:              { backgroundColor: colors.primary, borderRadius: radius.lg, paddingVertical: 18, alignItems: 'center', marginBottom: spacing.md, shadowColor: colors.primary, shadowOpacity: 0.4, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 6 },
-  ctaText:          { color: '#fff', fontSize: 17, fontWeight: '700' },
-  demoBtn:          { padding: spacing.md, alignItems: 'center' },
-  demoBtnText:      { color: colors.textMuted, fontSize: 12 },
-  processingBox:    { alignItems: 'center', padding: spacing.xl, gap: spacing.sm },
-  aiOrb:            { width: 80, height: 80, borderRadius: 40, backgroundColor: colors.primary + '20', justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: colors.primary + '40' },
-  aiOrbText:        { fontSize: 36 },
-  processingText:   { fontSize: 16, fontWeight: '600', color: colors.text, textAlign: 'center', marginTop: spacing.sm },
-  processingHint:   { fontSize: 13, color: colors.textMuted, textAlign: 'center' },
-  errorBox:         { alignItems: 'center', padding: spacing.lg, backgroundColor: '#FEF2F2', borderRadius: radius.lg, borderWidth: 1, borderColor: '#FECACA' },
-  errorIcon:        { fontSize: 32, marginBottom: spacing.sm },
-  errorText:        { fontSize: 14, color: colors.danger, textAlign: 'center', marginBottom: spacing.md },
-  retryBtn:         { backgroundColor: colors.danger, borderRadius: radius.md, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm },
-  retryBtnText:     { color: '#fff', fontWeight: '700' },
-  tips:             { backgroundColor: colors.card, borderRadius: radius.lg, padding: spacing.md, borderWidth: 1, borderColor: colors.border, marginTop: spacing.md },
-  tipsTitle:        { fontSize: 14, fontWeight: '700', color: colors.text, marginBottom: spacing.sm },
-  tipItem:          { fontSize: 13, color: colors.textMuted, marginBottom: 4, lineHeight: 18 },
+  container:          { flex: 1, backgroundColor: colors.background },
+  content:            { padding: spacing.md, paddingBottom: spacing.xl },
+  title:              { fontSize: 24, fontWeight: 'bold', color: colors.text, marginTop: spacing.sm },
+  subtitle:           { fontSize: 14, color: colors.textMuted, marginBottom: spacing.lg, marginTop: 4, lineHeight: 20 },
+  typeRow:            { flexDirection: 'row', gap: spacing.md, marginBottom: spacing.lg },
+  typeCard:           { flex: 1, backgroundColor: colors.card, borderRadius: radius.lg, padding: spacing.md, alignItems: 'center', borderWidth: 1, borderColor: colors.border },
+  typeCardActive:     { borderColor: colors.primary, backgroundColor: 'rgba(255, 122, 0, 0.12)' },
+  typeIconContainer:  { marginBottom: 8 },
+  typeLabel:          { fontSize: 13, fontWeight: '600', color: colors.textMuted, textAlign: 'center' },
+  typeLabelActive:    { color: colors.primary, fontWeight: '800' },
+  pickCard:           { backgroundColor: colors.card, borderRadius: radius.lg, padding: spacing.xl, alignItems: 'center', borderWidth: 1, borderColor: colors.primary, borderStyle: 'dashed', marginBottom: spacing.lg },
+  pickIconContainer:  { marginBottom: spacing.sm },
+  pickLabel:          { fontSize: 18, fontWeight: '700', color: colors.text, marginBottom: 4 },
+  pickSub:            { fontSize: 13, color: colors.textMuted, marginBottom: spacing.md },
+  pickBadge:          { backgroundColor: colors.primary, borderRadius: 20, paddingHorizontal: spacing.md, paddingVertical: 6 },
+  pickBadgeText:      { color: '#fff', fontSize: 11, fontWeight: '800', letterSpacing: 1 },
+  fileCard:           { backgroundColor: colors.card, borderRadius: radius.lg, padding: spacing.md, flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: spacing.md, borderWidth: 1, borderColor: colors.border },
+  fileName:           { fontSize: 14, fontWeight: '600', color: colors.text },
+  fileType:           { fontSize: 12, color: colors.textMuted, marginTop: 2 },
+  fileChange:         { color: colors.primary, fontWeight: '700', fontSize: 13 },
+  cta:                { backgroundColor: colors.primary, borderRadius: radius.lg, paddingVertical: 18, alignItems: 'center', marginBottom: spacing.md, shadowColor: colors.primary, shadowOpacity: 0.4, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 6 },
+  ctaText:            { color: '#fff', fontSize: 17, fontWeight: '800' },
+  demoBtn:            { padding: spacing.md, alignItems: 'center' },
+  demoBtnText:        { color: colors.textMuted, fontSize: 12 },
+  processingBox:      { alignItems: 'center', padding: spacing.xl, gap: spacing.sm },
+  aiOrb:              { width: 80, height: 80, borderRadius: 40, backgroundColor: 'rgba(255, 122, 0, 0.15)', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255, 122, 0, 0.35)' },
+  processingText:     { fontSize: 16, fontWeight: '600', color: colors.text, textAlign: 'center', marginTop: spacing.sm },
+  processingHint:     { fontSize: 13, color: colors.textMuted, textAlign: 'center' },
+  errorBox:           { alignItems: 'center', padding: spacing.lg, backgroundColor: 'rgba(239, 68, 68, 0.12)', borderRadius: radius.lg, borderWidth: 1, borderColor: 'rgba(239, 68, 68, 0.3)' },
+  errorText:          { fontSize: 14, color: '#FCA5A5', textAlign: 'center', marginBottom: spacing.md },
+  retryBtn:           { backgroundColor: colors.danger, borderRadius: radius.md, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm },
+  retryBtnText:       { color: '#fff', fontWeight: '700' },
+  tips:               { backgroundColor: colors.card, borderRadius: radius.lg, padding: spacing.md, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.md },
+  tipsTitle:          { fontSize: 14, fontWeight: '700', color: colors.text, marginBottom: spacing.sm },
+  tipItem:            { fontSize: 13, color: colors.textMuted, marginBottom: 4, lineHeight: 18 },
+  signalCard:         { backgroundColor: colors.surfaceOrange, borderRadius: radius.lg, padding: spacing.md, borderWidth: 1, borderColor: 'rgba(255, 122, 0, 0.25)', marginTop: spacing.sm },
+  signalTitle:        { fontSize: 14, fontWeight: '700', color: colors.text, marginBottom: spacing.sm },
+  signalRow:          { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: 8 },
+  signalIcon:         { width: 24, alignItems: 'center' },
+  signalLabel:        { fontSize: 13, color: colors.textMuted },
 });

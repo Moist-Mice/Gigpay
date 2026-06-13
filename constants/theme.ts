@@ -1,16 +1,16 @@
 // Brand colors and spacing for GigPay — saffron orange as primary
 export const colors = {
-  primary:     '#F97316',  // saffron orange — all CTAs, accents
-  primaryDark: '#EA580C',
-  background:  '#FAFAFA',
-  card:        '#FFFFFF',
-  text:        '#1A1A1A',
-  textMuted:   '#6B7280',
-  success:     '#16A34A',
-  danger:      '#DC2626',
-  warning:     '#D97706',
-  border:      '#E5E7EB',
-  surfaceOrange: '#FFF7ED', // light orange tint for selected states
+  primary:     '#FF7A00',  // Saffron neon-orange — premium high-contrast accent
+  primaryDark: '#D85F00',
+  background:  '#090A0F',  // Sleek deep space/midnight black
+  card:        '#131520',  // Rich dark navy-charcoal card background
+  text:        '#F3F4F6',  // Crisp off-white
+  textMuted:   '#9CA3AF',  // Muted grey
+  success:     '#10B981',  // Emerald green
+  danger:      '#EF4444',  // Rose red
+  warning:     '#F59E0B',  // Amber orange
+  border:      '#202438',  // Sleek dark navy border
+  surfaceOrange: '#2C1B12', // Warm ambient orange tint
 };
 
 export const spacing = {

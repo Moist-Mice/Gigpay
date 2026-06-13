@@ -14,32 +14,28 @@ const VERDICT_CONFIG: Record<Verdict, {
   sublabel: string;
   bg: string;
   border: string;
-  text: string;
-  emoji: string;
+  color: string;
 }> = {
   STRONG: {
     label:    'STRONG',
-    sublabel: 'Loan ke liye bahut accha',
-    bg:       '#DCFCE7',
-    border:   '#86EFAC',
-    text:     '#15803D',
-    emoji:    '💪',
+    sublabel: 'Excellent profile consistency',
+    bg:       'rgba(16, 185, 129, 0.12)',
+    border:   'rgba(16, 185, 129, 0.35)',
+    color:    '#34D399',
   },
   MODERATE: {
     label:    'MODERATE',
-    sublabel: 'Theek hai, improve karo',
-    bg:       '#FEF3C7',
-    border:   '#FCD34D',
-    text:     '#D97706',
-    emoji:    '📈',
+    sublabel: 'Stable, room to grow',
+    bg:       'rgba(245, 158, 11, 0.12)',
+    border:   'rgba(245, 158, 11, 0.35)',
+    color:    '#FBBF24',
   },
   WEAK: {
     label:    'WEAK',
-    sublabel: 'Income badhani padegi',
-    bg:       '#FEE2E2',
-    border:   '#FCA5A5',
-    text:     '#DC2626',
-    emoji:    '⚠️',
+    sublabel: 'Action needed to improve consistency',
+    bg:       'rgba(239, 68, 68, 0.12)',
+    border:   'rgba(239, 68, 68, 0.35)',
+    color:    '#FCA5A5',
   },
 };
 
@@ -58,14 +54,14 @@ export function ScoreBadge({ verdict, score, size = 'md' }: ScoreBadgeProps) {
       isLg && styles.badgeLg,
       isSm && styles.badgeSm,
     ]}>
-      <Text style={isSm ? styles.emojiSm : styles.emoji}>{cfg.emoji}</Text>
+      <View style={[styles.dot, { backgroundColor: cfg.color }, isSm && styles.dotSm]} />
       <View>
-        <Text style={[styles.label, { color: cfg.text }, isLg && styles.labelLg, isSm && styles.labelSm]}>
+        <Text style={[styles.label, { color: cfg.color }, isLg && styles.labelLg, isSm && styles.labelSm]}>
           {cfg.label}
           {score !== undefined ? ` · ${score}/100` : ''}
         </Text>
         {!isSm && (
-          <Text style={[styles.sublabel, { color: cfg.text }]}>{cfg.sublabel}</Text>
+          <Text style={[styles.sublabel, { color: '#9CA3AF' }]}>{cfg.sublabel}</Text>
         )}
       </View>
     </View>
@@ -73,13 +69,14 @@ export function ScoreBadge({ verdict, score, size = 'md' }: ScoreBadgeProps) {
 }
 
 const styles = StyleSheet.create({
-  badge:      { flexDirection: 'row', alignItems: 'center', borderRadius: radius.md, borderWidth: 1.5, paddingHorizontal: 12, paddingVertical: 8, gap: 8, alignSelf: 'flex-start' },
+  badge:      { flexDirection: 'row', alignItems: 'center', borderRadius: radius.md, borderWidth: 1, paddingHorizontal: 12, paddingVertical: 8, gap: 8, alignSelf: 'flex-start' },
   badgeLg:    { paddingHorizontal: 16, paddingVertical: 12, borderRadius: 14 },
-  badgeSm:    { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, gap: 4 },
-  emoji:      { fontSize: 20 },
-  emojiSm:    { fontSize: 13 },
-  label:      { fontSize: 14, fontWeight: '800', letterSpacing: 0.3 },
-  labelLg:    { fontSize: 17 },
-  labelSm:    { fontSize: 11 },
-  sublabel:   { fontSize: 11, fontWeight: '500', opacity: 0.85, marginTop: 1 },
+  badgeSm:    { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, gap: 5 },
+  dot:        { width: 8, height: 8, borderRadius: 4 },
+  dotSm:      { width: 6, height: 6, borderRadius: 3 },
+  label:      { fontSize: 13, fontWeight: '800', letterSpacing: 0.5 },
+  labelLg:    { fontSize: 16 },
+  labelSm:    { fontSize: 10 },
+  sublabel:   { fontSize: 10, fontWeight: '500', marginTop: 2, letterSpacing: 0.2 },
 });
+
