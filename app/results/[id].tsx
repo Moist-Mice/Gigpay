@@ -15,6 +15,8 @@ import { ScoreBadge } from '../../components/ScoreBadge';
 import { PlatformBadge } from '../../components/PlatformBadge';
 import { IncomeChart } from '../../components/IncomeChart';
 import { IncomeExplainer } from '../../components/IncomeExplainer';
+import { GigPulseCard } from '../../components/GigPulseCard';
+import { VoiceAssistant } from '../../components/VoiceAssistant';
 import {
   BankIcon,
   ShieldCheckIcon,
@@ -375,9 +377,30 @@ export default function ResultsScreen() {
         </View>
       )}
 
+      {/* GigPulse: Novel AI Seasonal Pattern Analysis */}
+      {token && chartMonths.length > 0 ? (
+        <GigPulseCard
+          submissionId={id!}
+          token={token}
+          monthsData={chartMonths}
+        />
+      ) : null}
+
       {/* Phase 4: Hindi AI Explainer */}
       {token ? (
         <IncomeExplainer submissionId={id!} token={token} />
+      ) : null}
+
+      {/* Voice AI Assistant */}
+      {token ? (
+        <VoiceAssistant
+          submissionId={id!}
+          token={token}
+          creditScore={compositeScore}
+          avgIncome={submission.avg_monthly_income}
+          verdict={submission.nbfc_verdict ?? 'WEAK'}
+          loanEligibility={loanEligibility}
+        />
       ) : null}
 
       {/* Generate Certificate CTA */}

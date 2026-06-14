@@ -21,7 +21,11 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#F97316"
       },
-      "package": "com.gigipay.app"
+      "package": "com.gigipay.app",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png",
@@ -42,10 +46,22 @@
           "photosPermission": "GigPay ko aapki gallery se earnings screenshot select karne ki zaroorat hai."
         }
       ],
+      [
+        "expo-av",
+        {
+          "microphonePermission": "GigPay Voice Assistant ko aapka sawaal sunne ke liye microphone chahiye."
+        }
+      ],
       "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "8a063834-3967-4f7d-82d2-f9d70b5a71c8"
+      }
     }
   }
 }

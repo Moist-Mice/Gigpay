@@ -44,7 +44,8 @@ export function IncomeExplainer({ submissionId, token }: Props) {
       });
 
       if (!response.ok) {
-        throw new Error(`Explanation failed: ${response.status}`);
+        const errText = await response.text().catch(() => '');
+        throw new Error(`AI service error (${response.status}). ${errText.slice(0, 80)}`);
       }
 
       const contentType = response.headers.get('content-type') ?? '';
@@ -54,6 +55,7 @@ export function IncomeExplainer({ submissionId, token }: Props) {
         const reader = response.body!.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
+        let got = false;
 
         while (true) {
           const { done, value } = await reader.read();
@@ -70,21 +72,32 @@ export function IncomeExplainer({ submissionId, token }: Props) {
               const parsed = JSON.parse(jsonStr);
               if (parsed.token) {
                 setExplanation(prev => prev + parsed.token);
+                got = true;
               } else if (parsed.text) {
                 // Full-text response (fallback/mock path)
                 setExplanation(parsed.text);
+                got = true;
+              } else if (parsed.done && parsed.text) {
+                setExplanation(parsed.text);
+                got = true;
               }
             } catch { /* skip malformed */ }
           }
         }
+
+        if (!got) {
+          throw new Error('AI ne koi jawab nahi diya. Dobara koshish karein.');
+        }
       } else {
         // Non-streaming fallback (edge function returned JSON)
         const data = await response.json();
-        setExplanation(data.explanation ?? data.text ?? 'Koi explanation nahi mili.');
+        const text = data.explanation ?? data.text ?? data.message;
+        if (!text) throw new Error('AI response empty. Please try again.');
+        setExplanation(text);
       }
 
     } catch (e: any) {
-      setError(e.message ?? 'Explanation load nahi ho paya.');
+      setError(e.message ?? 'Explanation load nahi ho paya. Network check karein.');
     } finally {
       setLoading(false);
     }
@@ -105,7 +118,7 @@ export function IncomeExplainer({ submissionId, token }: Props) {
             <RobotIcon size={20} color={colors.primary} strokeWidth={2} />
           </View>
           <View>
-            <Text style={styles.triggerTitle}>Samjhao mujhe</Text>
+            <Text style={styles.triggerTitle}>Samjhao mujhe 🤖</Text>
             <Text style={styles.triggerSub}>AI Hindi mein explain karega</Text>
           </View>
         </View>
@@ -128,9 +141,17 @@ export function IncomeExplainer({ submissionId, token }: Props) {
           )}
 
           {error ? (
-            <View style={styles.errorRow}>
-              <AlertTriangleIcon size={16} color={colors.danger} strokeWidth={2} />
-              <Text style={styles.errorText}>{error}</Text>
+            <View>
+              <View style={styles.errorRow}>
+                <AlertTriangleIcon size={16} color={colors.danger} strokeWidth={2} />
+                <Text style={styles.errorText}>{error}</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.retryBtn}
+                onPress={() => { setError(''); setExplanation(''); fetchExplanation(); }}
+              >
+                <Text style={styles.retryText}>↻ Dobara koshish karo</Text>
+              </TouchableOpacity>
             </View>
           ) : explanation ? (
             <Text style={styles.explanationText}>{explanation}</Text>
@@ -162,5 +183,6 @@ const styles = StyleSheet.create({
   errorText:       { color: colors.danger, fontSize: 13, flex: 1 },
   explanationText: { fontSize: 14, lineHeight: 22, color: colors.text, marginTop: spacing.sm, letterSpacing: 0.1 },
   refreshText:     { color: colors.primary, fontSize: 12, fontWeight: '700', marginTop: spacing.sm, textAlign: 'right' },
+  retryBtn:        { marginTop: spacing.sm, paddingVertical: 8, alignItems: 'center', backgroundColor: 'rgba(255, 122, 0, 0.12)', borderRadius: radius.md, borderWidth: 1, borderColor: 'rgba(255, 122, 0, 0.25)' },
+  retryText:       { color: colors.primary, fontSize: 13, fontWeight: '700' },
 });
-
