@@ -1,0 +1,278 @@
+/* SkillsCanvas.css
+   All styles are scoped to the skills constellation component.
+   The host page must set html, body to width:100%; height:100%; overflow:hidden;
+   and import the Google Fonts (Syne + DM Mono) in its <head>. */
+
+/* ── Noise overlay ────────────────────────────────────────────────────────── */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 100;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='250' height='250'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='250' height='250' filter='url(%23n)' opacity='.03'/%3E%3C/svg%3E");
+  opacity: .4;
+  mix-blend-mode: overlay;
+}
+
+/* ── Canvas ───────────────────────────────────────────────────────────────── */
+#skills-canvas {
+  display: block;
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+}
+
+#skills-canvas:active {
+  cursor: grabbing;
+}
+
+/* ── Skill count — top right ──────────────────────────────────────────────── */
+#count-wrap {
+  position: fixed;
+  top: 36px;
+  right: 44px;
+  z-index: 20;
+  pointer-events: none;
+  text-align: right;
+}
+
+#count-num {
+  font-family: 'Syne', sans-serif;
+  font-weight: 900;
+  font-size: 44px;
+  color: rgba(250, 250, 250, .04);
+  letter-spacing: -.04em;
+  line-height: 1;
+  transition: color .5s, opacity .4s;
+}
+
+#count-num.lit {
+  color: rgba(255, 107, 26, .2);
+}
+
+#count-label {
+  font-size: 8px;
+  letter-spacing: .2em;
+  text-transform: uppercase;
+  color: rgba(250, 250, 250, .1);
+  margin-top: 4px;
+}
+
+/* ── Category pills — left side ───────────────────────────────────────────── */
+#cats {
+  position: fixed;
+  left: 44px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.cat-btn {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 6px 0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  opacity: .28;
+  transition: opacity .2s;
+}
+
+.cat-btn:hover  { opacity: .7; }
+.cat-btn.active { opacity: 1;  }
+
+.cat-line {
+  width: 20px;
+  height: 1px;
+  background: rgba(250, 250, 250, .25);
+  flex-shrink: 0;
+  transition: width .3s cubic-bezier(.22, 1, .36, 1), background .2s;
+}
+
+.cat-btn:hover  .cat-line { width: 28px; background: #FF6B1A; }
+.cat-btn.active .cat-line { width: 28px; background: #FF6B1A; }
+
+.cat-label {
+  font-family: 'Syne', sans-serif;
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: #fafafa;
+  white-space: nowrap;
+}
+
+.cat-n {
+  font-size: 8px;
+  color: rgba(250, 250, 250, .22);
+}
+
+/* ── Cluster panel — bottom right ─────────────────────────────────────────── */
+#cluster-panel {
+  position: fixed;
+  bottom: 60px;
+  right: 44px;
+  z-index: 20;
+  text-align: right;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .4s;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  border-right: 1px solid rgba(250, 250, 250, .07);
+  padding-right: 16px;
+}
+
+#cluster-panel.on { opacity: 1; }
+
+#cp-eyebrow {
+  font-size: 7.5px;
+  letter-spacing: .24em;
+  text-transform: uppercase;
+  color: rgba(250, 250, 250, .25);
+  margin-bottom: 8px;
+}
+
+#cp-name {
+  font-family: 'Syne', sans-serif;
+  font-weight: 900;
+  font-size: 28px;
+  letter-spacing: -.04em;
+  line-height: 1;
+  margin-bottom: 6px;
+}
+
+#cp-desc {
+  font-size: 8px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: rgba(250, 250, 250, .2);
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(250, 250, 250, .06);
+  width: 100%;
+}
+
+#cp-list {
+  font-size: 8.5px;
+  color: rgba(250, 250, 250, .15);
+  margin-top: 6px;
+  line-height: 1.9;
+  max-width: 240px;
+  word-spacing: .2em;
+}
+
+/* ── Tooltip ─────────────────────────────────────────────────────────────── */
+#tt {
+  position: fixed;
+  display: none;
+  pointer-events: none;
+  z-index: 50;
+}
+
+#tt-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: linear-gradient(135deg, rgba(18, 18, 22, 0.97) 0%, rgba(10, 10, 14, 0.99) 100%);
+  border: 1px solid rgba(255, 255, 255, .11);
+  border-top: 1px solid rgba(255, 255, 255, .22);
+  border-radius: 50px;
+  padding: 8px 16px;
+  backdrop-filter: blur(32px) saturate(180%);
+  -webkit-backdrop-filter: blur(32px) saturate(180%);
+  box-shadow:
+    0 24px 64px rgba(0, 0, 0, .75),
+    0 4px 16px rgba(0, 0, 0, .5),
+    inset 0 1px 0 rgba(255, 255, 255, .06);
+  min-width: 0;
+}
+
+#tt-logo {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+#tt-fb {
+  display: none;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  font-size: 7.5px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+#tt-name {
+  font-family: 'Syne', sans-serif;
+  font-weight: 800;
+  font-size: 15px;
+  letter-spacing: -.03em;
+  color: #ffffff;
+}
+
+#tt-cat {
+  font-size: 7px;
+  letter-spacing: .15em;
+  text-transform: uppercase;
+  color: rgba(250, 250, 250, .22);
+  margin-top: 2px;
+}
+
+/* ── Hint ──────────────────────────────────────────────────────────────────── */
+#hint {
+  position: fixed;
+  bottom: 40px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  font-size: 8px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: rgba(250, 250, 250, .09);
+  text-align: center;
+  pointer-events: none;
+  transition: opacity .35s;
+}
+
+#hint.off { opacity: 0; }
+
+/* ── Reset button ─────────────────────────────────────────────────────────── */
+#reset-btn {
+  display: none;
+  position: fixed;
+  bottom: 40px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  font-family: 'DM Mono', monospace;
+  font-size: 8px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: rgba(250, 250, 250, .32);
+  padding: 7px 16px;
+  border: 1px solid rgba(250, 250, 250, .1);
+  border-radius: 5px;
+  background: rgba(6, 6, 6, .65);
+  backdrop-filter: blur(16px);
+  cursor: pointer;
+  transition: all .2s;
+}
+
+#reset-btn:hover {
+  color: #fafafa;
+  border-color: rgba(250, 250, 250, .22);
+  background: rgba(255, 107, 26, .07);
+}
