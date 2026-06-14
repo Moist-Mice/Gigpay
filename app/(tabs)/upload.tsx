@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet,
-  ActivityIndicator, Alert, ScrollView,
+  ActivityIndicator, Alert, ScrollView, Modal, TextInput,
 } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { useRouter } from 'expo-router';
@@ -22,6 +22,9 @@ import {
   CheckIcon,
   SparklesIcon,
   AlertTriangleIcon,
+  LockIcon,
+  EyeIcon,
+  EyeOffIcon,
 } from '../../components/Icons';
 
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL!;
@@ -51,6 +54,14 @@ export default function UploadScreen() {
   const [statusMsg, setStatusMsg] = useState('');
   const [error, setError] = useState('');
 
+  // Password-related states
+  const [isPasswordModalVisible, setIsPasswordModalVisible] = useState(false);
+  const [pdfPassword, setPdfPassword] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+  const [isSubmittingPassword, setIsSubmittingPassword] = useState(false);
+  const [showPasswordText, setShowPasswordText] = useState(false);
+  const [pdfBase64Cache, setPdfBase64Cache] = useState<string | null>(null);
+
   // ── Pick PDF ────────────────────────────────────────────────────────────────
   async function handlePickPDF() {
     try {
@@ -72,27 +83,44 @@ export default function UploadScreen() {
       setPdfName(asset.name);
       setStage('picked');
       setError('');
+      setPdfBase64Cache(null); // Clear cache on new pick
+      setPdfPassword('');
+      setPasswordError('');
     } catch (e: any) {
       Alert.alert('Could not pick file', e.message ?? 'Try again');
     }
   }
 
   // ── Upload + Parse PDF ──────────────────────────────────────────────────────
-  async function handleProcess() {
+  async function handleProcess(password?: string) {
     if (!pdfUri || !user) return;
-    setStage('uploading');
-    setStatusMsg('Statement read ho raha hai...');
-    setError('');
+
+    if (password !== undefined) {
+      setIsSubmittingPassword(true);
+      setPasswordError('');
+    } else {
+      setStage('uploading');
+      setStatusMsg('Statement read ho raha hai...');
+      setError('');
+    }
 
     try {
       const token = await getToken();
       if (!token) throw new Error('Authentication failed. Please sign in again.');
 
-      setStatusMsg('PDF base64 mein convert ho raha hai...');
-      const pdf_base64 = await pdfToBase64(pdfUri);
+      let base64Data = pdfBase64Cache;
+      if (!base64Data) {
+        if (password === undefined) {
+          setStatusMsg('PDF base64 mein convert ho raha hai...');
+        }
+        base64Data = await pdfToBase64(pdfUri);
+        setPdfBase64Cache(base64Data);
+      }
 
-      setStage('parsing');
-      setStatusMsg('AI bank data extract kar raha hai...');
+      if (password === undefined) {
+        setStage('parsing');
+        setStatusMsg('AI bank data extract kar raha hai...');
+      }
 
       const response = await fetch(`${SUPABASE_URL}/functions/v1/parse-statement`, {
         method: 'POST',
@@ -101,20 +129,39 @@ export default function UploadScreen() {
           'Content-Type': 'application/json',
           'apikey': SUPABASE_ANON_KEY,
         },
-        body: JSON.stringify({ pdf_base64, statement_type: statementType }),
+        body: JSON.stringify({ 
+          pdf_base64: base64Data, 
+          statement_type: statementType,
+          password: password || undefined
+        }),
       });
 
       if (!response.ok) {
         const err = await response.json();
+        if (response.status === 422 && err.password_required) {
+          setIsPasswordModalVisible(true);
+          setPasswordError(err.error ?? 'Password required to unlock PDF.');
+          setIsSubmittingPassword(false);
+          setStage('picked');
+          return;
+        }
         throw new Error(err.error ?? `Parse failed: ${response.status}`);
       }
 
       const data = await response.json();
+      setIsPasswordModalVisible(false);
+      setPdfPassword('');
+      setIsSubmittingPassword(false);
       router.push(`/results/${data.submission_id}` as any);
 
     } catch (e: any) {
-      setError(e.message ?? 'Something went wrong. Please try again.');
-      setStage('error');
+      if (password !== undefined) {
+        setPasswordError(e.message ?? 'Something went wrong. Please try again.');
+        setIsSubmittingPassword(false);
+      } else {
+        setError(e.message ?? 'Something went wrong. Please try again.');
+        setStage('error');
+      }
     }
   }
 
@@ -182,6 +229,7 @@ export default function UploadScreen() {
   ];
 
   return (
+    <>
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <Text style={styles.title}>Statement Upload Karein</Text>
       <Text style={styles.subtitle}>Apna bank ya credit card statement PDF upload karein — AI credit score calculate karega</Text>
@@ -242,7 +290,7 @@ export default function UploadScreen() {
               {statementType === 'bank' ? 'Bank Statement' : 'Credit Card Statement'}
             </Text>
           </View>
-          <TouchableOpacity onPress={() => { setPdfUri(null); setPdfName(null); setStage('idle'); }}>
+          <TouchableOpacity onPress={() => { setPdfUri(null); setPdfName(null); setStage('idle'); setPdfBase64Cache(null); setPdfPassword(''); setPasswordError(''); }}>
             <Text style={styles.fileChange}>Change</Text>
           </TouchableOpacity>
         </View>
@@ -267,7 +315,7 @@ export default function UploadScreen() {
             <AlertTriangleIcon size={32} color="#FCA5A5" strokeWidth={2} />
           </View>
           <Text style={styles.errorText}>{error}</Text>
-          <TouchableOpacity style={styles.retryBtn} onPress={() => { setStage('idle'); setPdfUri(null); setError(''); }}>
+          <TouchableOpacity style={styles.retryBtn} onPress={() => { setStage('idle'); setPdfUri(null); setError(''); setPdfBase64Cache(null); setPdfPassword(''); setPasswordError(''); }}>
             <Text style={styles.retryBtnText}>Try Again</Text>
           </TouchableOpacity>
         </View>
@@ -277,7 +325,7 @@ export default function UploadScreen() {
       {stage === 'picked' && pdfUri && (
         <TouchableOpacity
           style={styles.cta}
-          onPress={handleProcess}
+          onPress={() => handleProcess()}
           onLongPress={handleDemoMode}
           delayLongPress={1500}
           activeOpacity={0.85}
@@ -326,7 +374,99 @@ export default function UploadScreen() {
         </View>
       )}
     </ScrollView>
-  );
+
+    {/* Password Modal */}
+    <Modal
+      visible={isPasswordModalVisible}
+      transparent={true}
+      animationType="fade"
+      onRequestClose={() => {
+        setIsPasswordModalVisible(false);
+        setPdfPassword('');
+        setPasswordError('');
+      }}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <View style={styles.modalLockIcon}>
+              <LockIcon size={32} color={colors.primary} />
+            </View>
+            <Text style={styles.modalTitle}>Password Required</Text>
+            <Text style={styles.modalSubtitle}>
+              This bank statement PDF is encrypted. Enter password to unlock.
+            </Text>
+          </View>
+
+          <View style={styles.modalBody}>
+            <View style={styles.inputContainer}>
+              <View style={styles.inputIcon}>
+                <LockIcon size={18} color={colors.textMuted} />
+              </View>
+              <TextInput
+                style={styles.modalInput}
+                placeholder="Enter PDF Password"
+                placeholderTextColor={colors.textMuted}
+                value={pdfPassword}
+                onChangeText={(txt) => {
+                  setPdfPassword(txt);
+                  setPasswordError('');
+                }}
+                secureTextEntry={!showPasswordText}
+                autoFocus={true}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              <TouchableOpacity
+                style={styles.visibilityBtn}
+                onPress={() => setShowPasswordText(!showPasswordText)}
+              >
+                {showPasswordText ? (
+                  <EyeOffIcon size={20} color={colors.textMuted} />
+                ) : (
+                  <EyeIcon size={20} color={colors.textMuted} />
+                )}
+              </TouchableOpacity>
+            </View>
+
+            {passwordError ? (
+              <View style={styles.modalErrorRow}>
+                <AlertTriangleIcon size={16} color={colors.danger} />
+                <Text style={styles.modalErrorText}>{passwordError}</Text>
+              </View>
+            ) : null}
+          </View>
+
+          <View style={styles.modalActions}>
+            <TouchableOpacity
+              style={[styles.modalBtn, styles.modalBtnCancel]}
+              onPress={() => {
+                setIsPasswordModalVisible(false);
+                setPdfPassword('');
+                setPasswordError('');
+              }}
+              disabled={isSubmittingPassword}
+            >
+              <Text style={styles.modalBtnCancelText}>Cancel</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.modalBtn, styles.modalBtnSubmit]}
+              onPress={() => handleProcess(pdfPassword)}
+              disabled={isSubmittingPassword || !pdfPassword.trim()}
+            >
+              {isSubmittingPassword ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text style={styles.modalBtnSubmitText}>Unlock</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  </>
+);
 }
 
 const styles = StyleSheet.create({
@@ -370,4 +510,118 @@ const styles = StyleSheet.create({
   signalRow:          { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginBottom: 8 },
   signalIcon:         { width: 24, alignItems: 'center' },
   signalLabel:        { fontSize: 13, color: colors.textMuted },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(9, 10, 15, 0.85)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.lg,
+  },
+  modalContainer: {
+    backgroundColor: colors.card,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    width: '100%',
+    maxWidth: 340,
+    padding: spacing.lg,
+    shadowColor: colors.primary,
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.15,
+    shadowRadius: 20,
+    elevation: 8,
+  },
+  modalHeader: {
+    alignItems: 'center',
+    marginBottom: spacing.md,
+  },
+  modalLockIcon: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: 'rgba(255, 122, 0, 0.12)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: spacing.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 122, 0, 0.3)',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: colors.text,
+    textAlign: 'center',
+    marginBottom: spacing.xs,
+  },
+  modalSubtitle: {
+    fontSize: 13,
+    color: colors.textMuted,
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  modalBody: {
+    marginBottom: spacing.lg,
+  },
+  inputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.background,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: spacing.sm,
+    height: 52,
+  },
+  inputIcon: {
+    marginRight: spacing.sm,
+  },
+  modalInput: {
+    flex: 1,
+    color: colors.text,
+    fontSize: 15,
+    height: '100%',
+  },
+  visibilityBtn: {
+    padding: spacing.xs,
+  },
+  modalErrorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    marginTop: spacing.sm,
+  },
+  modalErrorText: {
+    fontSize: 12,
+    color: colors.danger,
+    flex: 1,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  modalBtn: {
+    flex: 1,
+    height: 48,
+    borderRadius: radius.md,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalBtnCancel: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: 'transparent',
+  },
+  modalBtnCancelText: {
+    color: colors.textMuted,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  modalBtnSubmit: {
+    backgroundColor: colors.primary,
+  },
+  modalBtnSubmitText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
+  },
 });

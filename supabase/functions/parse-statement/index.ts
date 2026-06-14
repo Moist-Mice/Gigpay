@@ -1,24 +1,27 @@
-// @ts-nocheck
 // supabase/functions/parse-statement/index.ts
-// Phase 4: Bank Statement PDF analysis via LLM + credit scoring
-// Waterfall: OpenRouter (3 free models) → Groq → Mock data
+// Phase 4: Bank Statement PDF analysis via server-side text extraction + LLM + credit scoring
+//
+// Behavior/Fallback Flow:
+// 1. JWT authentication check (Clerk mock token verification).
+// 2. If use_mock is true: instantly bypass PDF parsing and return MOCK_BANK_MONTHS (Demo Mode).
+// 3. Otherwise, base64-decode the PDF and extract raw text using "unpdf".
+//    - If text is empty or < 200 characters, return HTTP 422 (scanned image error).
+// 4. Send the first 15,000 characters of extracted text to OpenRouter.
+//    - Models tried in order: minimax/minimax-m3 -> deepseek/deepseek-v4-flash -> deepseek/deepseek-v4-pro.
+//    - If all models fail (network or non-200), return HTTP 503 (service unavailable).
+// 5. Parse the LLM JSON response.
+//    - If LLM flags an irrelevant PDF (e.g. resume or invoice), propagate error via HTTP 422.
+//    - If JSON parsing fails entirely, return HTTP 422 (format error).
+// 6. Run Credit Scoring and insert final record into supabase DB.
 
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { extractText, getDocumentProxy } from "npm:unpdf";
 
-// ── Provider 1: OpenRouter (free tier) ───────────────────────────────────────
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 const OPENROUTER_MODELS = [
-  'google/gemma-4-31b-it:free',          // Gemma 4, 256k ctx — best extraction
-  'mistralai/mistral-7b-instruct:free',  // Reliable fallback
-  'meta-llama/llama-3.2-3b-instruct:free', // Smallest/fastest fallback
-];
-
-// ── Provider 2: Groq (free, very fast) ───────────────────────────────────────
-const GROQ_BASE_URL = 'https://api.groq.com/openai/v1';
-const GROQ_MODELS = [
-  'llama-3.3-70b-versatile',  // 70B — best quality, free tier
-  'llama-3.1-8b-instant',     // 8B — fast fallback
-  'gemma2-9b-it',             // Google Gemma 2 9B on Groq
+  'minimax/minimax-m3',         // primary — strong extraction, 1M context, cheap
+  'deepseek/deepseek-v4-flash',  // fallback — very cheap, fast, 1M context
+  'deepseek/deepseek-v4-pro',    // last resort — higher quality if both above fail
 ];
 
 const corsHeaders = {
@@ -26,20 +29,33 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// ── PDF Text Extraction Helper ────────────────────────────────────────────────
+async function extractPdfText(base64: string, password?: string): Promise<string> {
+  const binaryString = atob(base64);
+  const len = binaryString.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  const pdf = await getDocumentProxy(bytes, password ? { password } : undefined);
+  const { text } = await extractText(pdf, { mergePages: true });
+  return text;
+}
+
 // ── Credit Scoring (inline — same as lib/credit-score.ts) ────────────────────
 
-function stdDev(values) {
+function stdDev(values: number[]) {
   if (values.length < 2) return 0;
   const mean = values.reduce((s, v) => s + v, 0) / values.length;
   const variance = values.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / values.length;
   return Math.sqrt(variance);
 }
 
-function clamp(value, min = 0, max = 100) {
+function clamp(value: number, min = 0, max = 100) {
   return Math.max(min, Math.min(max, value));
 }
 
-function computeCreditScore(months) {
+function computeCreditScore(months: any[]) {
   if (!months || months.length === 0) return { composite: 0, nbfc_verdict: 'WEAK', loan_eligibility: 0, income_stability: 0, debt_ratio: 0, savings_rate: 0 };
 
   const credits = months.map(m => m.total_credits || 0);
@@ -134,16 +150,73 @@ Deno.serve(async (req) => {
     }
 
     // ── Parse request ─────────────────────────────────────────────────────────
-    const { pdf_base64, statement_type = 'bank', use_mock } = await req.json();
+    const { pdf_base64, statement_type = 'bank', use_mock, password } = await req.json();
 
     let months;
 
-    if (use_mock || !pdf_base64) {
+    if (use_mock) {
       // Demo mode: return pre-baked HDFC-style mock bank data
       months = MOCK_BANK_MONTHS;
     } else {
-      // ── Call Gemma-3 via OpenRouter to extract statement data ───────────────
-      const prompt = `You are a financial data extraction engine. Extract all transaction data from this bank statement PDF (provided as base64).
+      // Real flow: check base64 presence
+      if (!pdf_base64) {
+        return new Response(JSON.stringify({ error: 'No PDF provided.' }), {
+          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      // 1. Server-side PDF text extraction
+      let pdfText = '';
+      try {
+        pdfText = await extractPdfText(pdf_base64, password);
+      } catch (err: any) {
+        console.error('PDF text extraction library failure:', err);
+        const errMsg = err.message || '';
+        const errName = err.name || '';
+        const isPasswordError = 
+          errName.includes('PasswordException') || 
+          errMsg.toLowerCase().includes('password') || 
+          errMsg.toLowerCase().includes('decrypt');
+
+        if (isPasswordError) {
+          return new Response(JSON.stringify({
+            error: password ? 'Incorrect password. Please try again.' : 'This PDF is password-protected. Please enter the password to unlock it.',
+            password_required: true
+          }), {
+            status: 422, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        return new Response(JSON.stringify({
+          error: 'Could not read text from this PDF. It may be a scanned image — please upload a PDF exported directly from net banking, not a scanned copy.'
+        }), {
+          status: 422, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      // Guard on extracted text length
+      if (!pdfText || pdfText.trim().length < 200) {
+        console.error(`Extracted text too short: ${pdfText?.trim()?.length ?? 0} characters`);
+        return new Response(JSON.stringify({
+          error: 'Could not read text from this PDF. It may be a scanned image — please upload a PDF exported directly from net banking, not a scanned copy.'
+        }), {
+          status: 422, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      // Truncate to first 15k characters
+      const truncatedText = pdfText.slice(0, 15000);
+
+      // 2. Build LLM prompt
+      const prompt = `This text was extracted from a PDF the user uploaded, claiming to be a bank or credit card statement.
+
+First, check whether this text actually looks like a bank/credit card statement (look for: account numbers, transaction dates, debit/credit amounts, balances, bank names).
+
+If it does NOT look like a financial statement (e.g. it's a resume, an article, an invoice from a single vendor, random text, etc.), respond with EXACTLY:
+{"error": "This PDF doesn't look like a bank or credit card statement. Please upload your actual bank/CC statement PDF."}
+and nothing else.
+
+Otherwise, extract the data using the schema below. Extract all transaction data from this bank statement.
 
 Return ONLY valid JSON with this exact schema — no markdown, no explanation:
 {
@@ -172,14 +245,16 @@ Rules:
 - gig_credits = count of small credits < ₹500 (gig payment pattern)
 - If you cannot extract data, return: {"error": "reason"}
 
-PDF base64 (first 50000 chars): ${pdf_base64.slice(0, 50000)}`;
+Extracted Statement Text (first 15000 chars):
+${truncatedText}`;
 
-      // ── Tier 1: OpenRouter free models ─────────────────────────────────────
+      // 3. Call OpenRouter models in a waterfall
       let aiResponse: Response | null = null;
       let lastError = '';
 
       for (const model of OPENROUTER_MODELS) {
         try {
+          console.log(`Calling model: ${model}...`);
           const resp = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
             method: 'POST',
             headers: {
@@ -191,77 +266,65 @@ PDF base64 (first 50000 chars): ${pdf_base64.slice(0, 50000)}`;
             body: JSON.stringify({
               model,
               messages: [{ role: 'user', content: prompt }],
-              max_tokens: 2000,
+              max_tokens: 4000,
               temperature: 0,
             }),
           });
-          if (resp.ok) { aiResponse = resp; break; }
-          lastError = `OR/${model}: ${resp.status}`;
+          if (resp.ok) {
+            aiResponse = resp;
+            break;
+          }
+          lastError = `OR/${model}: status ${resp.status}`;
           console.warn('OpenRouter model failed:', lastError);
         } catch (e) {
-          lastError = `OR/${model}: ${e}`;
+          lastError = `OR/${model} exception: ${e}`;
           console.warn('OpenRouter model threw:', lastError);
         }
       }
 
-      // ── Tier 2: Groq (if OpenRouter failed) ────────────────────────────────
+      // If all models failed to respond
       if (!aiResponse) {
-        const groqKey = Deno.env.get('GROQ_API_KEY');
-        if (groqKey) {
-          console.log('OpenRouter exhausted, trying Groq...');
-          for (const model of GROQ_MODELS) {
-            try {
-              const resp = await fetch(`${GROQ_BASE_URL}/chat/completions`, {
-                method: 'POST',
-                headers: {
-                  'Authorization': `Bearer ${groqKey}`,
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                  model,
-                  messages: [{ role: 'user', content: prompt }],
-                  max_tokens: 2000,
-                  temperature: 0,
-                }),
-              });
-              if (resp.ok) { aiResponse = resp; break; }
-              lastError = `Groq/${model}: ${resp.status}`;
-              console.warn('Groq model failed:', lastError);
-            } catch (e) {
-              lastError = `Groq/${model}: ${e}`;
-              console.warn('Groq model threw:', lastError);
-            }
-          }
-        } else {
-          console.warn('GROQ_API_KEY not set, skipping Groq tier');
-        }
+        console.error('All OpenRouter models failed. Last error:', lastError);
+        return new Response(JSON.stringify({
+          error: 'Our AI extraction service is temporarily unavailable. Please try again in a moment.'
+        }), {
+          status: 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
       }
 
-      // ── Tier 3: Mock data (guaranteed result) ──────────────────────────────
-      if (!aiResponse) {
-        console.error('All LLM providers failed, using mock data. Last:', lastError);
-        months = MOCK_BANK_MONTHS;
-      } else {
-        const aiData = await aiResponse.json();
-        const rawContent = aiData.choices?.[0]?.message?.content ?? '';
+      const aiData = await aiResponse.json();
+      const rawContent = aiData.choices?.[0]?.message?.content ?? '';
 
-        let parsed;
-        try {
-          const cleaned = rawContent.replace(/```json|```/g, '').trim();
-          parsed = JSON.parse(cleaned);
-        } catch {
-          // LLM returned unparseable response — fall back to mock
-          console.error('LLM parse failed, using mock data:', rawContent.slice(0, 200));
-          parsed = { months: MOCK_BANK_MONTHS };
-        }
+      // JSON parsing of output
+      let parsed;
+      try {
+        const cleaned = rawContent.replace(/```json|```/g, '').trim();
+        parsed = JSON.parse(cleaned);
+      } catch (err) {
+        console.error('LLM response JSON parse failed:', err, 'Raw content:', rawContent);
+        return new Response(JSON.stringify({
+          error: 'Could not understand the statement format. Please try a different PDF export.'
+        }), {
+          status: 422, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
 
-        if (parsed.error) {
-          return new Response(JSON.stringify({ error: parsed.error }), {
-            status: 422, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          });
-        }
+      // Propagate AI detected errors (e.g. irrelevant PDF error)
+      if (parsed.error) {
+        console.warn('AI reported extraction error:', parsed.error);
+        return new Response(JSON.stringify({ error: parsed.error }), {
+          status: 422, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
 
-        months = parsed.months ?? MOCK_BANK_MONTHS;
+      months = parsed.months;
+      if (!months || !Array.isArray(months) || months.length === 0) {
+        console.error('Invalid extracted months structure:', parsed);
+        return new Response(JSON.stringify({
+          error: 'Could not understand the statement format. Please try a different PDF export.'
+        }), {
+          status: 422, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
       }
     }
 
@@ -269,7 +332,7 @@ PDF base64 (first 50000 chars): ${pdf_base64.slice(0, 50000)}`;
     const score = computeCreditScore(months);
 
     // Convert months to MonthData for backward compat
-    const months_data = months.map(m => ({
+    const months_data = months.map((m: any) => ({
       period: m.month,
       amount: m.total_credits,
     }));
@@ -291,6 +354,7 @@ PDF base64 (first 50000 chars): ${pdf_base64.slice(0, 50000)}`;
         status: 'complete',
         statement_type,
         income_stability_score: score.income_stability,
+        text_extracted: !use_mock, // flag to indicate real text processing
         debt_to_income_ratio: score.debt_ratio,
         savings_rate: score.savings_rate,
         composite_credit_score: score.composite,
@@ -318,7 +382,7 @@ PDF base64 (first 50000 chars): ${pdf_base64.slice(0, 50000)}`;
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 
-  } catch (err) {
+  } catch (err: any) {
     console.error('parse-statement error:', err);
     return new Response(JSON.stringify({ error: err.message ?? 'Internal error' }), {
       status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
